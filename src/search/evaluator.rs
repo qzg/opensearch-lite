@@ -21,6 +21,11 @@ pub fn search(db: &Database, request: SearchRequest) -> Result<Value, String> {
     let mut total = 0usize;
     let mut hits = Vec::new();
     let sorted = request.body.get("sort").is_some();
+    let aggregations = request
+        .body
+        .get("aggregations")
+        .or_else(|| request.body.get("aggs"));
+    let needs_all_hits = sorted || aggregations.is_some();
 
     for index_name in expand_indices(db, &request.indices) {
         let Some(index) = db.indexes.get(&index_name) else {
@@ -29,7 +34,7 @@ pub fn search(db: &Database, request: SearchRequest) -> Result<Value, String> {
         for doc in index.documents.values() {
             if matches_query(doc, &query)? {
                 total += 1;
-                if sorted || (total > request.from && hits.len() < request.size) {
+                if needs_all_hits || (total > request.from && hits.len() < request.size) {
                     hits.push(MatchedDocument {
                         index: index_name.clone(),
                         doc,
@@ -59,7 +64,7 @@ pub fn search(db: &Database, request: SearchRequest) -> Result<Value, String> {
         })
         .collect::<Vec<_>>();
 
-    Ok(json!({
+    let mut response = json!({
         "took": 0,
         "timed_out": false,
         "_shards": { "total": 1, "successful": 1, "skipped": 0, "failed": 0 },
@@ -68,7 +73,11 @@ pub fn search(db: &Database, request: SearchRequest) -> Result<Value, String> {
             "max_score": if total == 0 { Value::Null } else { json!(1.0) },
             "hits": paged
         }
-    }))
+    });
+    if let Some(aggregations) = aggregations {
+        response["aggregations"] = evaluate_aggregations(&hits, aggregations)?;
+    }
+    Ok(response)
 }
 
 struct MatchedDocument<'a> {
@@ -357,6 +366,132 @@ fn score(_source: &Value, _query: &Value) -> f64 {
     1.0
 }
 
+fn evaluate_aggregations(
+    hits: &[MatchedDocument<'_>],
+    aggregations: &Value,
+) -> Result<Value, String> {
+    let object = aggregations
+        .as_object()
+        .ok_or_else(|| "aggregations must be an object".to_string())?;
+    let mut output = serde_json::Map::new();
+    for (name, aggregation) in object {
+        output.insert(name.clone(), evaluate_aggregation(hits, aggregation)?);
+    }
+    Ok(Value::Object(output))
+}
+
+fn evaluate_aggregation(
+    hits: &[MatchedDocument<'_>],
+    aggregation: &Value,
+) -> Result<Value, String> {
+    if let Some(terms) = aggregation.get("terms") {
+        let field = terms
+            .get("field")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "terms aggregation requires field".to_string())?;
+        let size = terms
+            .get("size")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(10);
+        let mut buckets = std::collections::BTreeMap::<String, (Value, usize)>::new();
+        for hit in hits {
+            if let Some(value) = value_at(&hit.doc.source, field) {
+                for value in aggregation_values(value) {
+                    let key = aggregation_key(value);
+                    let entry = buckets.entry(key).or_insert_with(|| (value.clone(), 0));
+                    entry.1 += 1;
+                }
+            }
+        }
+        let mut buckets = buckets
+            .into_values()
+            .map(|(key, count)| json!({ "key": key, "doc_count": count }))
+            .collect::<Vec<_>>();
+        buckets.sort_by(|left, right| {
+            right["doc_count"]
+                .as_u64()
+                .cmp(&left["doc_count"].as_u64())
+                .then_with(|| left["key"].to_string().cmp(&right["key"].to_string()))
+        });
+        buckets.truncate(size);
+        return Ok(json!({
+            "doc_count_error_upper_bound": 0,
+            "sum_other_doc_count": 0,
+            "buckets": buckets
+        }));
+    }
+
+    for kind in ["min", "max", "sum", "avg", "value_count", "stats"] {
+        if let Some(config) = aggregation.get(kind) {
+            let field = config
+                .get("field")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{kind} aggregation requires field"))?;
+            return Ok(metric_aggregation(hits, field, kind));
+        }
+    }
+
+    Err(format!(
+        "unsupported aggregation type [{}]",
+        aggregation
+            .as_object()
+            .and_then(|object| object.keys().next())
+            .cloned()
+            .unwrap_or_default()
+    ))
+}
+
+fn metric_aggregation(hits: &[MatchedDocument<'_>], field: &str, kind: &str) -> Value {
+    let values = hits
+        .iter()
+        .filter_map(|hit| value_at(&hit.doc.source, field))
+        .flat_map(numeric_aggregation_values)
+        .collect::<Vec<_>>();
+    let count = values.len() as u64;
+    let sum = values.iter().sum::<f64>();
+    let min = values.iter().copied().reduce(f64::min);
+    let max = values.iter().copied().reduce(f64::max);
+    match kind {
+        "min" => json!({ "value": min }),
+        "max" => json!({ "value": max }),
+        "sum" => json!({ "value": sum }),
+        "avg" => json!({ "value": if count == 0 { None } else { Some(sum / count as f64) } }),
+        "value_count" => json!({ "value": count }),
+        "stats" => json!({
+            "count": count,
+            "min": min,
+            "max": max,
+            "avg": if count == 0 { None } else { Some(sum / count as f64) },
+            "sum": sum
+        }),
+        _ => json!({}),
+    }
+}
+
+fn aggregation_values(value: &Value) -> Vec<&Value> {
+    match value {
+        Value::Array(values) => values.iter().collect(),
+        value => vec![value],
+    }
+}
+
+fn numeric_aggregation_values(value: &Value) -> Vec<f64> {
+    aggregation_values(value)
+        .into_iter()
+        .filter_map(Value::as_f64)
+        .collect()
+}
+
+fn aggregation_key(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        value => value.to_string(),
+    }
+}
+
 fn apply_sort(hits: &mut [MatchedDocument<'_>], sort: Option<&Value>) {
     let Some(sort) = sort else {
         return;
@@ -391,31 +526,132 @@ fn apply_sort(hits: &mut [MatchedDocument<'_>], sort: Option<&Value>) {
     });
 }
 
-fn filter_source(source: &Value, source_filter: Option<&Value>) -> Value {
+pub(crate) fn filter_source(source: &Value, source_filter: Option<&Value>) -> Value {
     match source_filter {
         Some(Value::Bool(false)) => Value::Null,
+        Some(Value::Bool(true)) | None => source.clone(),
+        Some(Value::String(field)) => include_fields(source, std::slice::from_ref(field)),
         Some(Value::Array(fields)) => {
-            let mut output = serde_json::Map::new();
-            for field in fields.iter().filter_map(Value::as_str) {
-                if let Some(value) = value_at(source, field) {
-                    output.insert(field.to_string(), value.clone());
-                }
-            }
-            Value::Object(output)
+            let fields = fields
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            include_fields(source, &fields)
         }
         Some(Value::Object(config)) => {
-            if let Some(includes) = config.get("includes").and_then(Value::as_array) {
-                let mut output = serde_json::Map::new();
-                for field in includes.iter().filter_map(Value::as_str) {
-                    if let Some(value) = value_at(source, field) {
-                        output.insert(field.to_string(), value.clone());
-                    }
-                }
-                Value::Object(output)
-            } else {
+            let includes = config
+                .get("includes")
+                .or_else(|| config.get("include"))
+                .map(source_filter_list)
+                .unwrap_or_default();
+            let excludes = config
+                .get("excludes")
+                .or_else(|| config.get("exclude"))
+                .map(source_filter_list)
+                .unwrap_or_default();
+            let mut output = if includes.is_empty() {
                 source.clone()
-            }
+            } else {
+                include_fields(source, &includes)
+            };
+            exclude_fields(&mut output, &excludes);
+            output
         }
         _ => source.clone(),
+    }
+}
+
+fn source_filter_list(value: &Value) -> Vec<String> {
+    match value {
+        Value::String(field) => vec![field.clone()],
+        Value::Array(fields) => fields
+            .iter()
+            .filter_map(Value::as_str)
+            .map(ToString::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn include_fields(source: &Value, fields: &[String]) -> Value {
+    let mut output = Value::Object(serde_json::Map::new());
+    for field in fields {
+        if let Some(value) = value_at(source, field) {
+            insert_path(&mut output, field, value.clone());
+        }
+    }
+    output
+}
+
+fn insert_path(output: &mut Value, field: &str, value: Value) {
+    let mut cursor = output;
+    let mut segments = field.split('.').peekable();
+    while let Some(segment) = segments.next() {
+        if segments.peek().is_none() {
+            if let Some(object) = cursor.as_object_mut() {
+                object.insert(segment.to_string(), value);
+            }
+            return;
+        }
+        let Some(object) = cursor.as_object_mut() else {
+            return;
+        };
+        cursor = object
+            .entry(segment.to_string())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    }
+}
+
+fn exclude_fields(output: &mut Value, excludes: &[String]) {
+    for exclude in excludes {
+        remove_path(output, exclude);
+    }
+}
+
+fn remove_path(output: &mut Value, field: &str) {
+    let segments = field.split('.').collect::<Vec<_>>();
+    if segments.contains(&"*") {
+        remove_wildcard_path(output, &segments);
+        return;
+    }
+    let Some((last, parents)) = segments.split_last() else {
+        return;
+    };
+    let mut cursor = output;
+    for segment in parents {
+        let Some(next) = cursor.get_mut(*segment) else {
+            return;
+        };
+        cursor = next;
+    }
+    if let Some(object) = cursor.as_object_mut() {
+        object.remove(*last);
+    }
+}
+
+fn remove_wildcard_path(output: &mut Value, segments: &[&str]) {
+    let Some((segment, rest)) = segments.split_first() else {
+        return;
+    };
+    if rest.is_empty() {
+        if let Some(object) = output.as_object_mut() {
+            if *segment == "*" {
+                object.clear();
+            } else {
+                object.remove(*segment);
+            }
+        }
+        return;
+    }
+    let Some(object) = output.as_object_mut() else {
+        return;
+    };
+    if *segment == "*" {
+        for value in object.values_mut() {
+            remove_wildcard_path(value, rest);
+        }
+    } else if let Some(value) = object.get_mut(*segment) {
+        remove_wildcard_path(value, rest);
     }
 }

@@ -28,6 +28,15 @@ console.log(await client.count({ index: "orders", body: { query: { term: { statu
 console.log(await client.search({ index: "orders", body: { query: { match_all: {} } } }));
 ```
 
+## Java
+
+The repository smoke uses the official `org.opensearch.client:opensearch-java`
+client against the local endpoint:
+
+```sh
+scripts/run-java-client-smoke.sh
+```
+
 ## Direct HTTP
 
 ```sh

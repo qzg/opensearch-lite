@@ -132,3 +132,50 @@ async fn terms_match_phrase_prefix_and_wildcard_queries_work_for_scalar_scans() 
     .await;
     assert_eq!(wildcard.body.unwrap()["hits"]["total"]["value"], 1);
 }
+
+#[tokio::test]
+async fn basic_metric_and_terms_aggregations_are_returned() {
+    let state = ephemeral_state();
+    for (id, status, total) in [
+        ("1", "paid", 42.0),
+        ("2", "paid", 58.0),
+        ("3", "refunded", 10.0),
+    ] {
+        call(
+            &state,
+            Method::PUT,
+            &format!("/orders/_doc/{id}"),
+            json!({ "status": status, "total": total }),
+        )
+        .await;
+    }
+
+    let response = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({
+            "size": 0,
+            "aggs": {
+                "by_status": { "terms": { "field": "status" } },
+                "total_stats": { "stats": { "field": "total" } },
+                "avg_total": { "avg": { "field": "total" } }
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(response.status, 200);
+    let body = response.body.unwrap();
+    assert_eq!(
+        body["aggregations"]["by_status"]["buckets"][0]["key"],
+        "paid"
+    );
+    assert_eq!(
+        body["aggregations"]["by_status"]["buckets"][0]["doc_count"],
+        2
+    );
+    assert_eq!(body["aggregations"]["total_stats"]["count"], 3);
+    assert_eq!(body["aggregations"]["total_stats"]["sum"], 110.0);
+    assert_eq!(body["aggregations"]["avg_total"]["value"], 110.0 / 3.0);
+}

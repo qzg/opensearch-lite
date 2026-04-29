@@ -41,6 +41,8 @@ curl -X POST http://127.0.0.1:9200/orders/_count -H 'content-type: application/j
 ```sh
 cargo test
 scripts/run-python-client-smoke.sh
+scripts/run-javascript-client-smoke.sh
+scripts/run-java-client-smoke.sh
 scripts/run-performance-gates.sh
 OPENSEARCH_PARITY_DOCKER=1 scripts/run-opensearch-parity-smoke.sh
 ```

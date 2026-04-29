@@ -334,6 +334,34 @@ async fn unsupported_bulk_methods_do_not_mutate() {
 }
 
 #[tokio::test]
+async fn bulk_accepts_refresh_query_param_and_refresh_is_noop_visible() {
+    let state = ephemeral_state();
+    let response = bulk_call(
+        &state,
+        Method::POST,
+        "/_bulk?refresh=wait_for",
+        r#"{"index":{"_index":"items","_id":"1"}}
+{"name":"one"}
+"#,
+    )
+    .await;
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body.unwrap()["errors"], false);
+
+    let refresh = call(&state, Method::POST, "/items/_refresh", Value::Null).await;
+    assert_eq!(refresh.status, 200);
+
+    let search = call(
+        &state,
+        Method::POST,
+        "/items/_search",
+        json!({ "query": { "term": { "name": "one" } } }),
+    )
+    .await;
+    assert_eq!(search.body.unwrap()["hits"]["total"]["value"], 1);
+}
+
+#[tokio::test]
 async fn create_conflicts_do_not_overwrite_documents() {
     let state = ephemeral_state();
     assert_eq!(
@@ -628,6 +656,61 @@ async fn missing_document_index_and_alias_misses_are_explicit() {
     assert_eq!(
         alias.body.unwrap()["error"]["type"],
         "aliases_not_found_exception"
+    );
+}
+
+#[tokio::test]
+async fn existence_head_apis_cover_templates_aliases_and_refresh_misses() {
+    let state = ephemeral_state();
+    call(
+        &state,
+        Method::PUT,
+        "/_index_template/orders-template",
+        json!({ "index_patterns": ["orders-*"], "template": {} }),
+    )
+    .await;
+    assert_eq!(
+        call(
+            &state,
+            Method::HEAD,
+            "/_index_template/orders-template",
+            Value::Null
+        )
+        .await
+        .status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::HEAD,
+            "/_index_template/missing-template",
+            Value::Null
+        )
+        .await
+        .status,
+        404
+    );
+
+    call(&state, Method::PUT, "/orders", json!({})).await;
+    call(&state, Method::PUT, "/orders/_alias/orders-read", json!({})).await;
+    assert_eq!(
+        call(&state, Method::HEAD, "/_alias/orders-read", Value::Null)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(
+        call(&state, Method::HEAD, "/orders/_alias/missing", Value::Null)
+            .await
+            .status,
+        404
+    );
+    assert_eq!(
+        call(&state, Method::POST, "/missing/_refresh", Value::Null)
+            .await
+            .status,
+        404
     );
 }
 

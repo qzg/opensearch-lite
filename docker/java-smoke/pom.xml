@@ -5,4 +5,33 @@
   <groupId>local.opensearchlite</groupId>
   <artifactId>java-smoke</artifactId>
   <version>0.1.0</version>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <opensearch-java.version>3.8.0</opensearch-java.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.opensearch.client</groupId>
+      <artifactId>opensearch-java</artifactId>
+      <version>${opensearch-java.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+      <version>5.6</version>
+    </dependency>
+  </dependencies>
+  <build>
+    <sourceDirectory>src/main/java</sourceDirectory>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
+        <configuration>
+          <mainClass>local.opensearchlite.Smoke</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

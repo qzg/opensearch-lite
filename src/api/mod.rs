@@ -67,6 +67,9 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     if request.path == "/_msearch" || parts.get(1) == Some(&"_msearch") {
         return handle_msearch(&state, &request, parts.first().copied());
     }
+    if request.path == "/_refresh" || parts.get(1) == Some(&"_refresh") {
+        return handle_refresh(&state, parts.first().copied());
+    }
     if parts.first() == Some(&"_mapping") || parts.get(1) == Some(&"_mapping") {
         return handle_mapping(&state, &request, parts.first().copied()).await;
     }
@@ -277,6 +280,17 @@ async fn handle_template(state: &AppState, request: &Request, name: Option<&str>
                 .collect::<Vec<_>>();
             Response::json(200, json!({ "index_templates": templates }))
         }
+        Method::HEAD => {
+            let Some(name) = name else {
+                return Response::empty(400);
+            };
+            let db = state.store.database();
+            if db.templates.contains_key(name) {
+                Response::empty(200)
+            } else {
+                Response::empty(404)
+            }
+        }
         Method::DELETE => {
             let Some(name) = name else {
                 return parse_error("template name is required".to_string());
@@ -400,6 +414,13 @@ async fn handle_alias(state: &AppState, request: &Request, parts: &[&str]) -> Re
             Err(error) => parse_error(error),
         },
         (Method::POST, ["_aliases"]) => handle_alias_actions(state, request).await,
+        (Method::HEAD, ["_alias", alias]) => alias_exists_response(state, None, alias),
+        (Method::HEAD, [index, "_alias", alias]) => {
+            alias_exists_response(state, Some(index), alias)
+        }
+        (Method::HEAD, [index, "_aliases", alias]) => {
+            alias_exists_response(state, Some(index), alias)
+        }
         (Method::GET, ["_alias", alias]) => alias_response(state, None, Some(alias)),
         (Method::GET, ["_aliases"]) => alias_response(state, None, None),
         (Method::GET, [index, "_alias", alias]) => alias_response(state, Some(index), Some(alias)),
@@ -518,6 +539,29 @@ fn alias_response(state: &AppState, index: Option<&str>, alias: Option<&str>) ->
         ));
     }
     Response::json(200, Value::Object(output))
+}
+
+fn alias_exists_response(state: &AppState, index: Option<&str>, alias: &str) -> Response {
+    let db = state.store.database();
+    if let Some(index) = index {
+        let Some(index_name) = db.resolve_index(index) else {
+            return Response::empty(404);
+        };
+        if db
+            .aliases
+            .get(alias)
+            .map(|metadata| metadata.index == index_name)
+            .unwrap_or(false)
+        {
+            Response::empty(200)
+        } else {
+            Response::empty(404)
+        }
+    } else if db.aliases.contains_key(alias) {
+        Response::empty(200)
+    } else {
+        Response::empty(404)
+    }
 }
 
 async fn handle_document(state: &AppState, request: &Request, parts: &[&str]) -> Response {
@@ -966,7 +1010,7 @@ fn handle_mget(state: &AppState, request: &Request, path_index: Option<&str>) ->
         Err(error) => return parse_error(error),
     };
     let path_index = path_index.filter(|index| *index != "_mget");
-    let docs = mget_items(&body, path_index);
+    let docs = mget_items(&body, path_index, source_filter_from_query(&request.query));
     let result = state.store.read_database(|db| {
         docs.into_iter()
             .map(|item| mget_doc_response(db, item))
@@ -975,6 +1019,26 @@ fn handle_mget(state: &AppState, request: &Request, path_index: Option<&str>) ->
     match result {
         Ok(docs) => Response::json(200, json!({ "docs": docs })),
         Err(error) => store_error(error),
+    }
+}
+
+fn handle_refresh(state: &AppState, path_index: Option<&str>) -> Response {
+    let indices = path_indices(path_index, "_refresh");
+    match state
+        .store
+        .read_database(|db| validate_search_indices(db, &indices))
+    {
+        Ok(Ok(())) => Response::json(
+            200,
+            json!({
+                "_shards": {
+                    "total": 1,
+                    "successful": 1,
+                    "failed": 0
+                }
+            }),
+        ),
+        Ok(Err(error)) | Err(error) => store_error(error),
     }
 }
 
@@ -1175,9 +1239,15 @@ fn action_entry(value: &Value) -> StoreResult<(&str, &serde_json::Map<String, Va
 struct MgetItem {
     index: Option<String>,
     id: String,
+    source_filter: Option<Value>,
 }
 
-fn mget_items(body: &Value, path_index: Option<&str>) -> Vec<MgetItem> {
+fn mget_items(
+    body: &Value,
+    path_index: Option<&str>,
+    query_source_filter: Option<Value>,
+) -> Vec<MgetItem> {
+    let request_source_filter = body.get("_source").cloned().or(query_source_filter);
     if let Some(ids) = body.get("ids").and_then(Value::as_array) {
         return ids
             .iter()
@@ -1185,6 +1255,7 @@ fn mget_items(body: &Value, path_index: Option<&str>) -> Vec<MgetItem> {
             .map(|id| MgetItem {
                 index: path_index.map(ToString::to_string),
                 id: id.to_string(),
+                source_filter: request_source_filter.clone(),
             })
             .collect();
     }
@@ -1201,11 +1272,55 @@ fn mget_items(body: &Value, path_index: Option<&str>) -> Vec<MgetItem> {
                             .or(path_index)
                             .map(ToString::to_string),
                         id: id.to_string(),
+                        source_filter: doc
+                            .get("_source")
+                            .cloned()
+                            .or_else(|| request_source_filter.clone()),
                     })
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn source_filter_from_query(query: &[(String, String)]) -> Option<Value> {
+    let source = query
+        .iter()
+        .find_map(|(key, value)| (key == "_source").then_some(value.as_str()));
+    if let Some(source) = source {
+        return match source {
+            "true" | "" => Some(Value::Bool(true)),
+            "false" => Some(Value::Bool(false)),
+            fields => Some(Value::Array(source_filter_fields(fields))),
+        };
+    }
+
+    let includes = query
+        .iter()
+        .find_map(|(key, value)| (key == "_source_includes").then(|| source_filter_fields(value)));
+    let excludes = query
+        .iter()
+        .find_map(|(key, value)| (key == "_source_excludes").then(|| source_filter_fields(value)));
+    if includes.is_none() && excludes.is_none() {
+        return None;
+    }
+
+    let mut filter = serde_json::Map::new();
+    if let Some(includes) = includes {
+        filter.insert("includes".to_string(), Value::Array(includes));
+    }
+    if let Some(excludes) = excludes {
+        filter.insert("excludes".to_string(), Value::Array(excludes));
+    }
+    Some(Value::Object(filter))
+}
+
+fn source_filter_fields(value: &str) -> Vec<Value> {
+    value
+        .split(',')
+        .filter(|field| !field.trim().is_empty())
+        .map(|field| Value::String(field.trim().to_string()))
+        .collect()
 }
 
 fn mget_doc_response(db: &Database, item: MgetItem) -> Value {
@@ -1227,15 +1342,23 @@ fn mget_doc_response(db: &Database, item: MgetItem) -> Value {
         .get(&index_name)
         .and_then(|index| index.documents.get(&item.id))
     {
-        Some(doc) => json!({
-            "_index": index_name,
-            "_id": item.id,
-            "_version": doc.version,
-            "_seq_no": doc.seq_no,
-            "_primary_term": doc.primary_term,
-            "found": true,
-            "_source": doc.source
-        }),
+        Some(doc) => {
+            let mut response = json!({
+                "_index": index_name,
+                "_id": item.id,
+                "_version": doc.version,
+                "_seq_no": doc.seq_no,
+                "_primary_term": doc.primary_term,
+                "found": true
+            });
+            if item.source_filter.as_ref() != Some(&Value::Bool(false)) {
+                response["_source"] = search_engine::evaluator::filter_source(
+                    &doc.source,
+                    item.source_filter.as_ref(),
+                );
+            }
+            response
+        }
         None => json!({ "_index": index_name, "_id": item.id, "found": false }),
     }
 }

@@ -162,11 +162,15 @@ def run_flow(base):
     assert status == 200 and body["errors"] is False, (base, "bulk", status, body)
 
     refresh_status, _ = request(base, "POST", "/axon-parity/_refresh")
-    assert refresh_status in (200, 501), (base, "refresh", refresh_status)
+    assert refresh_status == 200, (base, "refresh", refresh_status)
 
     status, body = request(base, "POST", "/axon-parity/_mget", {"ids": ["1", "2", "missing"]})
     assert status == 200, (base, "mget", status)
     assert [doc["found"] for doc in body["docs"]] == [True, True, False], body
+
+    status, body = request(base, "POST", "/axon-parity/_mget?_source=status", {"ids": ["1"]})
+    assert status == 200, (base, "mget source filter", status)
+    assert body["docs"][0]["_source"] == {"status": "paid"}, body
 
     status, body = request(
         base,
@@ -184,6 +188,23 @@ def run_flow(base):
     )
     assert status == 200, (base, "search", status)
     assert body["hits"]["total"]["value"] == 2, body
+
+    status, body = request(
+        base,
+        "POST",
+        "/axon-parity/_search",
+        {
+            "size": 0,
+            "aggs": {
+                "by_status": {"terms": {"field": "status"}},
+                "total_stats": {"stats": {"field": "total"}},
+            },
+        },
+    )
+    assert status == 200, (base, "aggregations", status)
+    assert body["aggregations"]["by_status"]["buckets"][0]["key"] == "paid", body
+    assert body["aggregations"]["by_status"]["buckets"][0]["doc_count"] == 3, body
+    assert body["aggregations"]["total_stats"]["count"] == 3, body
 
     msearch = "\n".join(
         [

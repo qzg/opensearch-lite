@@ -87,6 +87,15 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
             _ => unsupported_method("msearch"),
         };
     }
+    if path == "/_refresh" || segments.get(1) == Some(&"_refresh") {
+        return match *method {
+            Method::GET | Method::POST => RouteMatch {
+                api_name: "indices.refresh",
+                tier: Tier::Implemented,
+            },
+            _ => unsupported_method("indices.refresh"),
+        };
+    }
     if segments.first() == Some(&"_mapping") || segments.get(1) == Some(&"_mapping") {
         return match *method {
             Method::GET | Method::PUT => RouteMatch {
@@ -115,8 +124,13 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
     }
     if segments.first() == Some(&"_index_template") {
         return match *method {
-            Method::PUT | Method::GET | Method::DELETE => RouteMatch {
-                api_name: "indices.put_index_template",
+            Method::PUT | Method::GET | Method::HEAD | Method::DELETE => RouteMatch {
+                api_name: match *method {
+                    Method::GET => "indices.get_index_template",
+                    Method::HEAD => "indices.exists_index_template",
+                    Method::DELETE => "indices.delete_index_template",
+                    _ => "indices.put_index_template",
+                },
                 tier: Tier::Implemented,
             },
             _ => unsupported_method("indices.put_index_template"),
@@ -128,10 +142,18 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
         || segments.get(1) == Some(&"_aliases")
     {
         return match *method {
-            Method::PUT | Method::GET | Method::DELETE | Method::POST => RouteMatch {
-                api_name: "indices.put_alias",
-                tier: Tier::Implemented,
-            },
+            Method::PUT | Method::GET | Method::HEAD | Method::DELETE | Method::POST => {
+                RouteMatch {
+                    api_name: match *method {
+                        Method::GET => "indices.get_alias",
+                        Method::HEAD => "indices.exists_alias",
+                        Method::DELETE => "indices.delete_alias",
+                        Method::POST => "indices.update_aliases",
+                        _ => "indices.put_alias",
+                    },
+                    tier: Tier::Implemented,
+                }
+            }
             _ => unsupported_method("indices.put_alias"),
         };
     }

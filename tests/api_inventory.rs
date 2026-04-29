@@ -80,3 +80,18 @@ fn document_route_shapes_match_opensearch_methods() {
     assert_eq!(extra_segments.api_name, "index");
     assert_eq!(extra_segments.tier, Tier::Unsupported);
 }
+
+#[test]
+fn refresh_and_existence_routes_use_specific_api_names() {
+    let refresh = classify(&Method::POST, "/orders/_refresh");
+    assert_eq!(refresh.api_name, "indices.refresh");
+    assert_eq!(refresh.tier, Tier::Implemented);
+
+    let template_exists = classify(&Method::HEAD, "/_index_template/orders");
+    assert_eq!(template_exists.api_name, "indices.exists_index_template");
+    assert_eq!(template_exists.tier, Tier::Implemented);
+
+    let alias_exists = classify(&Method::HEAD, "/orders/_alias/orders-read");
+    assert_eq!(alias_exists.api_name, "indices.exists_alias");
+    assert_eq!(alias_exists.tier, Tier::Implemented);
+}
