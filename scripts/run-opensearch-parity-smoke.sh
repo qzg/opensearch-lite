@@ -172,6 +172,29 @@ def run_flow(base):
     assert status == 200, (base, "mget source filter", status)
     assert body["docs"][0]["_source"] == {"status": "paid"}, body
 
+    status, body = request(base, "GET", "/axon-parity/_source/1?_source=status")
+    assert status == 200, (base, "get source", status)
+    assert body == {"status": "paid"}, body
+
+    status, body = request(base, "GET", "/axon-parity/_mapping/field/status?include_defaults=true")
+    assert status == 200, (base, "field mapping", status)
+    assert "axon-parity" in body and "mappings" in body["axon-parity"], body
+
+    status, body = request(base, "GET", "/axon-parity/_stats")
+    assert status == 200, (base, "stats", status)
+    assert "axon-parity" in body["indices"], body
+    assert body["indices"]["axon-parity"]["primaries"]["docs"]["count"] >= 3, body
+
+    status, body = request(
+        base,
+        "POST",
+        "/axon-parity/_update/upserted?_source=status",
+        {"doc": {"status": "ignored"}, "upsert": {"status": "from-upsert"}},
+    )
+    assert status == 201, (base, "update upsert", status)
+    assert body["result"] == "created", body
+    assert body["get"]["_source"] == {"status": "from-upsert"}, body
+
     status, body = request(
         base,
         "POST",

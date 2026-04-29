@@ -52,6 +52,8 @@ pub struct IndexMetadata {
     pub aliases: BTreeSet<String>,
     pub documents: BTreeMap<String, StoredDocument>,
     pub tombstones: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub store_size_bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +106,7 @@ pub enum WriteOperation {
         id: String,
         doc: Value,
         doc_as_upsert: bool,
+        upsert: Option<Value>,
     },
     DeleteDocument {
         index: String,
@@ -388,10 +391,13 @@ impl Store {
                 id,
                 doc,
                 doc_as_upsert,
+                upsert,
             } => {
                 let (index, mut mutations) = match db.resolve_index(&index) {
                     Some(index) => (index, Vec::new()),
-                    None if doc_as_upsert => self.resolve_or_create_index(db, &index)?,
+                    None if doc_as_upsert || upsert.is_some() => {
+                        self.resolve_or_create_index(db, &index)?
+                    }
                     None => {
                         return Err(not_found(
                             "index_not_found_exception",
@@ -399,24 +405,32 @@ impl Store {
                         ));
                     }
                 };
-                if !doc_as_upsert
-                    && db
-                        .indexes
-                        .get(&index)
-                        .and_then(|index| index.documents.get(&id))
-                        .is_none()
-                {
+                let exists = db
+                    .indexes
+                    .get(&index)
+                    .and_then(|index| index.documents.get(&id))
+                    .is_some();
+                if !doc_as_upsert && upsert.is_none() && !exists {
                     return Err(not_found(
                         "document_missing_exception",
                         format!("document [{id}] missing"),
                     ));
                 }
-                mutations.push(Mutation::UpdateDocument {
-                    index: index.clone(),
-                    id: id.clone(),
-                    doc,
-                    doc_as_upsert,
-                });
+                if exists {
+                    mutations.push(Mutation::UpdateDocument {
+                        index: index.clone(),
+                        id: id.clone(),
+                        doc,
+                        doc_as_upsert,
+                    });
+                } else {
+                    let source = upsert.unwrap_or(doc);
+                    mutations.push(Mutation::CreateDocument {
+                        index: index.clone(),
+                        id: id.clone(),
+                        source,
+                    });
+                }
                 Ok(PreparedWrite {
                     mutations,
                     outcome: PreparedOutcome::Document { index, id },
@@ -609,12 +623,14 @@ impl Store {
         id: &str,
         doc: Value,
         doc_as_upsert: bool,
+        upsert: Option<Value>,
     ) -> StoreResult<StoredDocument> {
         let results = self.apply_write_operations(vec![WriteOperation::UpdateDocument {
             index: index.to_string(),
             id: id.to_string(),
             doc,
             doc_as_upsert,
+            upsert,
         }])?;
         match single_write_result(results)? {
             WriteOutcome::Document(document) => Ok(document),
@@ -805,14 +821,21 @@ impl Database {
 
 impl IndexMetadata {
     fn new(name: String, settings: Value, mappings: Value) -> Self {
-        Self {
+        let mut index = Self {
             name,
             settings,
             mappings,
             aliases: BTreeSet::new(),
             documents: BTreeMap::new(),
             tombstones: BTreeMap::new(),
-        }
+            store_size_bytes: 0,
+        };
+        index.recompute_store_size();
+        index
+    }
+
+    fn recompute_store_size(&mut self) {
+        self.store_size_bytes = estimate_index_bytes(self);
     }
 }
 
@@ -875,6 +898,32 @@ fn estimate_database_bytes(db: &Database) -> usize {
         bytes = bytes.saturating_add(estimate_value_bytes(&alias.raw));
     }
     bytes
+}
+
+fn estimate_index_bytes(index: &IndexMetadata) -> usize {
+    let mut bytes = index.name.len();
+    bytes = bytes.saturating_add(estimate_value_bytes(&index.settings));
+    bytes = bytes.saturating_add(estimate_value_bytes(&index.mappings));
+    for alias in &index.aliases {
+        bytes = bytes.saturating_add(alias.len());
+    }
+    for (id, document) in &index.documents {
+        bytes = bytes.saturating_add(estimate_document_bytes(id, &document.source));
+    }
+    for id in index.tombstones.keys() {
+        bytes = bytes.saturating_add(estimate_tombstone_bytes(id));
+    }
+    bytes
+}
+
+fn estimate_document_bytes(id: &str, source: &Value) -> usize {
+    id.len()
+        .saturating_add(64)
+        .saturating_add(estimate_value_bytes(source))
+}
+
+fn estimate_tombstone_bytes(id: &str) -> usize {
+    id.len().saturating_add(16)
 }
 
 fn estimate_value_bytes(value: &Value) -> usize {
@@ -957,16 +1006,19 @@ impl Mutation {
             Mutation::PutMapping { index, mappings } => {
                 if let Some(index_meta) = db.indexes.get_mut(index) {
                     merge_object(&mut index_meta.mappings, mappings);
+                    index_meta.recompute_store_size();
                 }
             }
             Mutation::PutSettings { index, settings } => {
                 if let Some(index_meta) = db.indexes.get_mut(index) {
                     merge_object(&mut index_meta.settings, settings);
+                    index_meta.recompute_store_size();
                 }
             }
             Mutation::PutAlias { index, alias, raw } => {
                 if let Some(index_meta) = db.indexes.get_mut(index) {
                     index_meta.aliases.insert(alias.clone());
+                    index_meta.recompute_store_size();
                 }
                 db.aliases.insert(
                     alias.clone(),
@@ -980,17 +1032,29 @@ impl Mutation {
             Mutation::DeleteAlias { index, alias } => {
                 if let Some(index_meta) = db.indexes.get_mut(index) {
                     index_meta.aliases.remove(alias);
+                    index_meta.recompute_store_size();
                 }
                 db.aliases.remove(alias);
             }
             Mutation::IndexDocument { index, id, source } => {
                 db.seq_no += 1;
                 if let Some(index_meta) = db.indexes.get_mut(index) {
+                    if let Some(existing) = index_meta.documents.get(id) {
+                        index_meta.store_size_bytes = index_meta
+                            .store_size_bytes
+                            .saturating_sub(estimate_document_bytes(id, &existing.source));
+                    }
+                    if index_meta.tombstones.remove(id).is_some() {
+                        index_meta.store_size_bytes = index_meta
+                            .store_size_bytes
+                            .saturating_sub(estimate_tombstone_bytes(id));
+                    }
                     let version = index_meta
                         .documents
                         .get(id)
                         .map(|doc| doc.version + 1)
                         .unwrap_or(1);
+                    let new_bytes = estimate_document_bytes(id, source);
                     index_meta.documents.insert(
                         id.clone(),
                         StoredDocument {
@@ -1001,7 +1065,8 @@ impl Mutation {
                             primary_term: 1,
                         },
                     );
-                    index_meta.tombstones.remove(id);
+                    index_meta.store_size_bytes =
+                        index_meta.store_size_bytes.saturating_add(new_bytes);
                 }
             }
             Mutation::CreateDocument { index, id, source } => {
@@ -1009,6 +1074,11 @@ impl Mutation {
                 if let Some(index_meta) = db.indexes.get_mut(index) {
                     if index_meta.documents.contains_key(id) {
                         return;
+                    }
+                    if index_meta.tombstones.remove(id).is_some() {
+                        index_meta.store_size_bytes = index_meta
+                            .store_size_bytes
+                            .saturating_sub(estimate_tombstone_bytes(id));
                     }
                     index_meta.documents.insert(
                         id.clone(),
@@ -1020,7 +1090,9 @@ impl Mutation {
                             primary_term: 1,
                         },
                     );
-                    index_meta.tombstones.remove(id);
+                    index_meta.store_size_bytes = index_meta
+                        .store_size_bytes
+                        .saturating_add(estimate_document_bytes(id, source));
                 }
             }
             Mutation::UpdateDocument {
@@ -1037,11 +1109,17 @@ impl Mutation {
                         None => return,
                     };
                     merge_object(&mut source, doc);
+                    if let Some(existing) = index_meta.documents.get(id) {
+                        index_meta.store_size_bytes = index_meta
+                            .store_size_bytes
+                            .saturating_sub(estimate_document_bytes(id, &existing.source));
+                    }
                     let version = index_meta
                         .documents
                         .get(id)
                         .map(|doc| doc.version + 1)
                         .unwrap_or(1);
+                    let new_bytes = estimate_document_bytes(id, &source);
                     index_meta.documents.insert(
                         id.clone(),
                         StoredDocument {
@@ -1052,13 +1130,23 @@ impl Mutation {
                             primary_term: 1,
                         },
                     );
-                    index_meta.tombstones.remove(id);
+                    if index_meta.tombstones.remove(id).is_some() {
+                        index_meta.store_size_bytes = index_meta
+                            .store_size_bytes
+                            .saturating_sub(estimate_tombstone_bytes(id));
+                    }
+                    index_meta.store_size_bytes =
+                        index_meta.store_size_bytes.saturating_add(new_bytes);
                 }
             }
             Mutation::DeleteDocument { index, id } => {
                 db.seq_no += 1;
                 if let Some(index_meta) = db.indexes.get_mut(index) {
-                    if index_meta.documents.remove(id).is_some() {
+                    if let Some(document) = index_meta.documents.remove(id) {
+                        index_meta.store_size_bytes = index_meta
+                            .store_size_bytes
+                            .saturating_sub(estimate_document_bytes(id, &document.source))
+                            .saturating_add(estimate_tombstone_bytes(id));
                         index_meta.tombstones.insert(id.clone(), db.seq_no);
                     }
                 }

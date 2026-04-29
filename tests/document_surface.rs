@@ -2,7 +2,7 @@ mod support;
 
 use http::Method;
 use serde_json::{json, Value};
-use support::{call, ephemeral_state};
+use support::{call, ephemeral_state, ndjson_call};
 
 #[tokio::test]
 async fn mget_reads_path_index_ids_and_mixed_docs() {
@@ -115,6 +115,220 @@ async fn mget_applies_request_and_item_source_filtering() {
     assert_eq!(
         nested.body.unwrap()["docs"][0]["_source"],
         json!({ "details": { "city": "Austin" }, "total": 42 })
+    );
+}
+
+#[tokio::test]
+async fn get_source_returns_raw_source_filters_and_head_existence() {
+    let state = ephemeral_state();
+    call(
+        &state,
+        Method::PUT,
+        "/orders/_doc/1",
+        json!({
+            "status": "paid",
+            "total": 42,
+            "details": { "city": "Austin", "secret": "hidden" }
+        }),
+    )
+    .await;
+
+    let source = call(&state, Method::GET, "/orders/_source/1", Value::Null).await;
+    assert_eq!(source.status, 200);
+    assert_eq!(source.body.unwrap()["status"], "paid");
+
+    let filtered = call(
+        &state,
+        Method::GET,
+        "/orders/_source/1?_source_includes=details.city,total&_source_excludes=details.secret",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(filtered.status, 200);
+    assert_eq!(
+        filtered.body.unwrap(),
+        json!({ "details": { "city": "Austin" }, "total": 42 })
+    );
+
+    assert_eq!(
+        call(&state, Method::HEAD, "/orders/_source/1", Value::Null)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(
+        call(&state, Method::HEAD, "/orders/_source/missing", Value::Null)
+            .await
+            .status,
+        404
+    );
+}
+
+#[tokio::test]
+async fn get_source_respects_disabled_source_mappings() {
+    let state = ephemeral_state();
+    call(
+        &state,
+        Method::PUT,
+        "/hidden",
+        json!({
+            "mappings": {
+                "_source": { "enabled": false },
+                "properties": { "status": { "type": "keyword" } }
+            }
+        }),
+    )
+    .await;
+    call(
+        &state,
+        Method::PUT,
+        "/hidden/_doc/1",
+        json!({ "status": "paid" }),
+    )
+    .await;
+
+    let source = call(&state, Method::GET, "/hidden/_source/1", Value::Null).await;
+    assert_eq!(source.status, 404);
+    assert_eq!(
+        call(&state, Method::HEAD, "/hidden/_source/1", Value::Null)
+            .await
+            .status,
+        404
+    );
+}
+
+#[tokio::test]
+async fn update_supports_explicit_upsert_and_filtered_get_response() {
+    let state = ephemeral_state();
+
+    let created = call(
+        &state,
+        Method::POST,
+        "/orders/_update/1?_source=status",
+        json!({
+            "doc": { "status": "paid", "total": 42 },
+            "upsert": { "status": "open", "internal": "hidden" }
+        }),
+    )
+    .await;
+    assert_eq!(created.status, 201);
+    let body = created.body.unwrap();
+    assert_eq!(body["result"], "created");
+    assert_eq!(body["get"]["_source"], json!({ "status": "open" }));
+
+    let updated = call(
+        &state,
+        Method::POST,
+        "/orders/_update/1?_source=status,total",
+        json!({
+            "doc": { "status": "paid", "total": 42 },
+            "upsert": { "status": "ignored" }
+        }),
+    )
+    .await;
+    assert_eq!(updated.status, 200);
+    let body = updated.body.unwrap();
+    assert_eq!(body["result"], "updated");
+    assert_eq!(
+        body["get"]["_source"],
+        json!({ "status": "paid", "total": 42 })
+    );
+
+    let stored = call(&state, Method::GET, "/orders/_doc/1", Value::Null).await;
+    assert_eq!(stored.body.unwrap()["_source"]["internal"], "hidden");
+
+    let hidden_get = call(
+        &state,
+        Method::POST,
+        "/orders/_update/1",
+        json!({
+            "doc": { "status": "refunded" },
+            "_source": false
+        }),
+    )
+    .await;
+    assert_eq!(hidden_get.status, 200);
+    assert!(hidden_get.body.unwrap().get("get").is_none());
+}
+
+#[tokio::test]
+async fn update_rejects_malformed_upsert_bodies_without_mutation() {
+    let state = ephemeral_state();
+
+    let upsert_only = call(
+        &state,
+        Method::POST,
+        "/bad-upsert/_update/1",
+        json!({ "upsert": { "status": "created" } }),
+    )
+    .await;
+    assert_eq!(upsert_only.status, 400);
+    assert_eq!(
+        call(&state, Method::HEAD, "/bad-upsert", Value::Null)
+            .await
+            .status,
+        404
+    );
+
+    let misspelled = call(
+        &state,
+        Method::POST,
+        "/bad-upsert/_update/1",
+        json!({
+            "dc": { "status": "created" },
+            "upsert": { "status": "created" }
+        }),
+    )
+    .await;
+    assert_eq!(misspelled.status, 400);
+    assert_eq!(
+        call(&state, Method::HEAD, "/bad-upsert", Value::Null)
+            .await
+            .status,
+        404
+    );
+
+    let scalar_doc = call(
+        &state,
+        Method::POST,
+        "/bad-upsert/_update/1",
+        json!({
+            "doc": "not an object",
+            "upsert": { "status": "created" }
+        }),
+    )
+    .await;
+    assert_eq!(scalar_doc.status, 400);
+}
+
+#[tokio::test]
+async fn bulk_update_supports_explicit_upsert_and_rejects_malformed_upsert() {
+    let state = ephemeral_state();
+    let response = ndjson_call(
+        &state,
+        Method::POST,
+        "/_bulk",
+        r#"{"update":{"_index":"orders","_id":"1"}}
+{"doc":{"status":"ignored"},"upsert":{"status":"from-upsert","internal":"hidden"}}
+{"update":{"_index":"bad-upsert","_id":"1"}}
+{"dc":{"status":"created"},"upsert":{"status":"created"}}
+"#,
+    )
+    .await;
+    assert_eq!(response.status, 200);
+    let body = response.body.unwrap();
+    assert_eq!(body["errors"], true);
+    assert_eq!(body["items"][0]["update"]["status"], 201);
+    assert_eq!(body["items"][0]["update"]["result"], "created");
+    assert_eq!(body["items"][1]["update"]["status"], 400);
+
+    let stored = call(&state, Method::GET, "/orders/_doc/1", Value::Null).await;
+    assert_eq!(stored.body.unwrap()["_source"]["status"], "from-upsert");
+    assert_eq!(
+        call(&state, Method::HEAD, "/bad-upsert", Value::Null)
+            .await
+            .status,
+        404
     );
 }
 

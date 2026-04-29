@@ -89,6 +89,7 @@ fn fixture_database(documents: usize) -> Database {
             aliases: BTreeSet::new(),
             documents: docs,
             tombstones: BTreeMap::new(),
+            store_size_bytes: documents * 128,
         },
     );
     Database {

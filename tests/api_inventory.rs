@@ -95,3 +95,58 @@ fn refresh_and_existence_routes_use_specific_api_names() {
     assert_eq!(alias_exists.api_name, "indices.exists_alias");
     assert_eq!(alias_exists.tier, Tier::Implemented);
 }
+
+#[test]
+fn tranche_three_routes_are_implemented_by_specific_names() {
+    let source = classify(&Method::GET, "/orders/_source/1");
+    assert_eq!(source.api_name, "get_source");
+    assert_eq!(source.tier, Tier::Implemented);
+
+    let source_exists = classify(&Method::HEAD, "/orders/_source/1");
+    assert_eq!(source_exists.api_name, "exists_source");
+    assert_eq!(source_exists.tier, Tier::Implemented);
+
+    let field_mapping = classify(&Method::GET, "/orders/_mapping/field/status");
+    assert_eq!(field_mapping.api_name, "indices.get_field_mapping");
+    assert_eq!(field_mapping.tier, Tier::Implemented);
+
+    let stats = classify(&Method::GET, "/orders/_stats");
+    assert_eq!(stats.api_name, "indices.stats");
+    assert_eq!(stats.tier, Tier::Implemented);
+
+    let cat_indices = classify(&Method::GET, "/_cat/indices/orders");
+    assert_eq!(cat_indices.api_name, "cat.indices");
+    assert_eq!(cat_indices.tier, Tier::BestEffort);
+}
+
+#[test]
+fn tranche_three_generated_inventory_marks_manual_handlers() {
+    let inventory = inventory();
+    for implemented in [
+        "get_source",
+        "exists_source",
+        "indices.get_field_mapping",
+        "indices.stats",
+    ] {
+        let route = inventory
+            .iter()
+            .find(|route| route.name == implemented)
+            .unwrap_or_else(|| panic!("missing route inventory entry {implemented}"));
+        assert_eq!(
+            route.tier,
+            Tier::Implemented,
+            "route {implemented} should be discoverable as implemented"
+        );
+    }
+}
+
+#[test]
+fn tranche_three_routes_reject_invalid_extra_segments() {
+    let bad_stats = classify(&Method::GET, "/orders/_stats/docs/extra");
+    assert_eq!(bad_stats.api_name, "indices.stats");
+    assert_eq!(bad_stats.tier, Tier::Unsupported);
+
+    let bad_field_mapping = classify(&Method::GET, "/orders/_mapping/field/status/extra");
+    assert_eq!(bad_field_mapping.api_name, "indices.get_field_mapping");
+    assert_eq!(bad_field_mapping.tier, Tier::Unsupported);
+}

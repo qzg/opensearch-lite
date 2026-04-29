@@ -40,7 +40,15 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
         return get_only(method, "cluster.get_settings", Tier::BestEffort);
     }
     if path.starts_with("/_cat/") {
-        return get_only(method, "cat", Tier::BestEffort);
+        return get_only(
+            method,
+            if segments.get(1) == Some(&"indices") {
+                "cat.indices"
+            } else {
+                "cat"
+            },
+            Tier::BestEffort,
+        );
     }
     if path == "/_bulk" || segments.get(1) == Some(&"_bulk") {
         return match *method {
@@ -49,6 +57,19 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
                 tier: Tier::Implemented,
             },
             _ => unsupported_method("bulk"),
+        };
+    }
+    if segments.len() == 3 && segments.get(1) == Some(&"_source") {
+        return match *method {
+            Method::GET | Method::HEAD => RouteMatch {
+                api_name: if *method == Method::HEAD {
+                    "exists_source"
+                } else {
+                    "get_source"
+                },
+                tier: Tier::Implemented,
+            },
+            _ => unsupported_method("get_source"),
         };
     }
     if path == "/_search" || segments.get(1) == Some(&"_search") {
@@ -87,6 +108,30 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
             _ => unsupported_method("msearch"),
         };
     }
+    if segments.first() == Some(&"_stats") {
+        if segments.len() > 2 {
+            return unsupported_method("indices.stats");
+        }
+        return match *method {
+            Method::GET => RouteMatch {
+                api_name: "indices.stats",
+                tier: Tier::Implemented,
+            },
+            _ => unsupported_method("indices.stats"),
+        };
+    }
+    if segments.get(1) == Some(&"_stats") {
+        if segments.len() > 3 {
+            return unsupported_method("indices.stats");
+        }
+        return match *method {
+            Method::GET => RouteMatch {
+                api_name: "indices.stats",
+                tier: Tier::Implemented,
+            },
+            _ => unsupported_method("indices.stats"),
+        };
+    }
     if path == "/_refresh" || segments.get(1) == Some(&"_refresh") {
         return match *method {
             Method::GET | Method::POST => RouteMatch {
@@ -94,6 +139,30 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
                 tier: Tier::Implemented,
             },
             _ => unsupported_method("indices.refresh"),
+        };
+    }
+    if segments.first() == Some(&"_mapping") && segments.get(1) == Some(&"field") {
+        if segments.len() != 3 {
+            return unsupported_method("indices.get_field_mapping");
+        }
+        return match *method {
+            Method::GET => RouteMatch {
+                api_name: "indices.get_field_mapping",
+                tier: Tier::Implemented,
+            },
+            _ => unsupported_method("indices.get_field_mapping"),
+        };
+    }
+    if segments.get(1) == Some(&"_mapping") && segments.get(2) == Some(&"field") {
+        if segments.len() != 4 {
+            return unsupported_method("indices.get_field_mapping");
+        }
+        return match *method {
+            Method::GET => RouteMatch {
+                api_name: "indices.get_field_mapping",
+                tier: Tier::Implemented,
+            },
+            _ => unsupported_method("indices.get_field_mapping"),
         };
     }
     if segments.first() == Some(&"_mapping") || segments.get(1) == Some(&"_mapping") {

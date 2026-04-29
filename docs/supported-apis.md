@@ -18,8 +18,9 @@ smaller than the inventory.
 | `indices.create`, `indices.get`, `indices.delete` | implemented | Single-node local catalog behavior. |
 | `indices.put_index_template`, `indices.get_index_template`, `indices.delete_index_template` | implemented | Stored as readable JSON in the local catalog. |
 | `indices.put_alias`, `indices.get_alias`, `indices.delete_alias`, `_aliases` actions | implemented | Alias misses return explicit not-found errors; `_aliases` supports basic `add` and `remove`. |
-| `indices.get_mapping`, `indices.put_mapping`, `indices.get_settings`, `indices.put_settings` | implemented | Stored as JSON catalog metadata and used by compatibility clients. |
-| `index`, `get`, `delete`, `update`, `create` | implemented | `_create` conflicts on existing IDs; update scripts are unsupported. |
+| `indices.get_mapping`, `indices.put_mapping`, `indices.get_field_mapping`, `indices.get_settings`, `indices.put_settings` | implemented | Stored as JSON catalog metadata and used by compatibility clients; field mapping supports exact and wildcard field lookup plus basic defaults. |
+| `indices.stats`, `cat.indices` | implemented/best-effort | Single-node document/store counters for local compatibility checks; `_stats` filters the locally supported metric groups and rejects unknown metric names. |
+| `index`, `get`, `get_source`, `exists_source`, `delete`, `update`, `create` | implemented | `_create` conflicts on existing IDs; update supports `doc`, `doc_as_upsert`, explicit `upsert`, and source-filtered update responses; update scripts are unsupported. |
 | `indices.refresh` | implemented | No-op visibility barrier; writes are already visible after commit in the local store. |
 | `bulk` | implemented | `POST`/`PUT` only; accepts refresh query parameters as no-ops; malformed source lines, invalid action metadata, and missing index metadata produce errors without mutation. |
 | `search`, `count`, `mget`, `msearch` | implemented | Scalar in-memory search for `match_all`, `term`, `terms`, `range`, `exists`, `ids`, simple `match`, `match_phrase`, `match_phrase_prefix`, `prefix`, `wildcard`, and `bool` with basic `minimum_should_match`. Search supports basic `terms`, `min`, `max`, `sum`, `avg`, `value_count`, and `stats` aggregations. `_mget` supports request-level and item-level `_source` filtering. |

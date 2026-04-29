@@ -55,6 +55,9 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
         };
         return handle_bulk(&state, &request, path_index).await;
     }
+    if parts.len() == 3 && parts.get(1) == Some(&"_source") {
+        return handle_source(&state, &request, parts[0], parts[2]);
+    }
     if request.path == "/_search" || parts.get(1) == Some(&"_search") {
         return handle_search(&state, &request, parts.first().copied());
     }
@@ -67,8 +70,16 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     if request.path == "/_msearch" || parts.get(1) == Some(&"_msearch") {
         return handle_msearch(&state, &request, parts.first().copied());
     }
+    if parts.first() == Some(&"_stats") || parts.get(1) == Some(&"_stats") {
+        return handle_stats(&state, &parts);
+    }
     if request.path == "/_refresh" || parts.get(1) == Some(&"_refresh") {
         return handle_refresh(&state, parts.first().copied());
+    }
+    if (parts.first() == Some(&"_mapping") && parts.get(1) == Some(&"field") && parts.len() == 3)
+        || (parts.get(1) == Some(&"_mapping") && parts.get(2) == Some(&"field") && parts.len() == 4)
+    {
+        return handle_field_mapping(&state, &request, &parts);
     }
     if parts.first() == Some(&"_mapping") || parts.get(1) == Some(&"_mapping") {
         return handle_mapping(&state, &request, parts.first().copied()).await;
@@ -103,6 +114,7 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
 
 fn handle_best_effort(state: AppState, request: Request, api_name: &str) -> Response {
     logging::approximation(api_name, &request.path);
+    let parts = segments(&request.path);
     match request.path.as_str() {
         "/_cluster/health" => best_effort::cluster_health(api_name),
         "/_cluster/settings" => Response::json(
@@ -122,7 +134,9 @@ fn handle_best_effort(state: AppState, request: Request, api_name: &str) -> Resp
             }),
         )
         .compatibility_signal(api_name, "best_effort"),
-        path if path.starts_with("/_cat/indices") => cat_indices(&state, api_name),
+        _ if parts.first() == Some(&"_cat") && parts.get(1) == Some(&"indices") => {
+            cat_indices(&state, &request, api_name)
+        }
         path if path.starts_with("/_cat/health") => Response::json(
             200,
             json!([{
@@ -697,23 +711,48 @@ async fn handle_document(state: &AppState, request: &Request, parts: &[&str]) ->
                 return parse_error("document id is required".to_string());
             };
             match request.body_json() {
-                Ok(body) if body.get("script").is_some() => unsupported("update.script"),
                 Ok(body) => {
-                    let doc = body.get("doc").cloned().unwrap_or_else(|| json!({}));
-                    let upsert = body
-                        .get("doc_as_upsert")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
+                    let update = match parse_update_body(&body) {
+                        Ok(update) => update,
+                        Err(error) if error.status == 501 => return unsupported("update.script"),
+                        Err(error) => return store_error(error),
+                    };
+                    let source_filter =
+                        source_filter_from_query(&request.query).or(update.source_filter);
                     let index = index.to_string();
                     let id = id.to_string();
                     let index_for_store = index.clone();
                     let id_for_store = id.clone();
                     match run_store(state.store.clone(), move |store| {
-                        store.update_document(&index_for_store, &id_for_store, doc, upsert)
+                        store.update_document(
+                            &index_for_store,
+                            &id_for_store,
+                            update.doc,
+                            update.doc_as_upsert,
+                            update.upsert,
+                        )
                     })
                     .await
                     {
-                        Ok(doc) => doc_write_response(&index, &id, &doc, 200, "updated"),
+                        Ok(doc) => {
+                            let result = if doc.version == 1 {
+                                "created"
+                            } else {
+                                "updated"
+                            };
+                            let mut response = doc_write_body(&index, &id, &doc, result);
+                            if let Some(source_filter) = source_filter.as_ref() {
+                                if source_filter != &Value::Bool(false) {
+                                    response["get"] = json!({
+                                        "_source": search_engine::evaluator::filter_source(
+                                            &doc.source,
+                                            Some(source_filter),
+                                        )
+                                    });
+                                }
+                            }
+                            Response::json(if result == "created" { 201 } else { 200 }, response)
+                        }
                         Err(error) => store_error(error),
                     }
                 }
@@ -721,6 +760,137 @@ async fn handle_document(state: &AppState, request: &Request, parts: &[&str]) ->
             }
         }
         _ => unsupported("document"),
+    }
+}
+
+struct ParsedUpdateBody {
+    doc: Value,
+    doc_as_upsert: bool,
+    upsert: Option<Value>,
+    source_filter: Option<Value>,
+}
+
+fn parse_update_body(body: &Value) -> StoreResult<ParsedUpdateBody> {
+    let Some(object) = body.as_object() else {
+        return Err(update_parse_error("update body must be a JSON object"));
+    };
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "doc" | "upsert" | "doc_as_upsert" | "_source" | "detect_noop" | "script"
+        ) {
+            return Err(update_parse_error(format!(
+                "unknown update body field [{key}]"
+            )));
+        }
+    }
+    if object.contains_key("script") {
+        return Err(StoreError::new(
+            501,
+            "opensearch_lite_unsupported_api_exception",
+            "OpenSearch Lite does not implement [update.script] yet",
+        ));
+    }
+    let doc = object
+        .get("doc")
+        .cloned()
+        .ok_or_else(|| update_parse_error("update body must include a [doc] object"))?;
+    if !doc.is_object() {
+        return Err(update_parse_error("update [doc] must be a JSON object"));
+    }
+    let upsert = object.get("upsert").cloned();
+    if let Some(upsert) = upsert.as_ref() {
+        if !upsert.is_object() {
+            return Err(update_parse_error("update [upsert] must be a JSON object"));
+        }
+    }
+    let doc_as_upsert = match object.get("doc_as_upsert") {
+        Some(Value::Bool(value)) => *value,
+        Some(_) => {
+            return Err(update_parse_error(
+                "update [doc_as_upsert] must be a boolean",
+            ));
+        }
+        None => false,
+    };
+    if let Some(detect_noop) = object.get("detect_noop") {
+        if !detect_noop.is_boolean() {
+            return Err(update_parse_error("update [detect_noop] must be a boolean"));
+        }
+    }
+
+    Ok(ParsedUpdateBody {
+        doc,
+        doc_as_upsert,
+        upsert,
+        source_filter: object.get("_source").cloned(),
+    })
+}
+
+fn update_parse_error(reason: impl Into<String>) -> StoreError {
+    StoreError::new(400, "parse_exception", reason)
+}
+
+enum SourceLookup {
+    MissingIndex,
+    MissingSource,
+    Found(Value),
+}
+
+fn handle_source(state: &AppState, request: &Request, index: &str, id: &str) -> Response {
+    let lookup = state.store.read_database(|db| {
+        let Some(index_name) = db.resolve_index(index) else {
+            return SourceLookup::MissingIndex;
+        };
+        let Some(index_meta) = db.indexes.get(&index_name) else {
+            return SourceLookup::MissingIndex;
+        };
+        if source_disabled(&index_meta.mappings) {
+            return SourceLookup::MissingSource;
+        }
+        match index_meta.documents.get(id) {
+            Some(doc) => SourceLookup::Found(doc.source.clone()),
+            None => SourceLookup::MissingSource,
+        }
+    });
+    let lookup = match lookup {
+        Ok(lookup) => lookup,
+        Err(error) => return store_error(error),
+    };
+    match lookup {
+        SourceLookup::MissingIndex => {
+            if request.method == Method::HEAD {
+                Response::empty(404)
+            } else {
+                store_error(StoreError::new(
+                    404,
+                    "index_not_found_exception",
+                    format!("no such index [{index}]"),
+                ))
+            }
+        }
+        SourceLookup::MissingSource => {
+            if request.method == Method::HEAD {
+                Response::empty(404)
+            } else {
+                store_error(StoreError::new(
+                    404,
+                    "document_missing_exception",
+                    format!("document [{id}] missing"),
+                ))
+            }
+        }
+        SourceLookup::Found(source) => {
+            if request.method == Method::HEAD {
+                Response::empty(200)
+            } else {
+                let source = search_engine::evaluator::filter_source(
+                    &source,
+                    source_filter_from_query(&request.query).as_ref(),
+                );
+                Response::json(200, source)
+            }
+        }
     }
 }
 
@@ -811,22 +981,25 @@ async fn handle_bulk(state: &AppState, request: &Request, path_index: Option<&st
                     plans.push(BulkPlan::Immediate(json!({ action: bulk_error(error) })));
                 } else {
                     let body = body.expect("checked above");
-                    let doc = body.get("doc").cloned().unwrap_or_else(|| json!({}));
-                    let upsert = body
-                        .get("doc_as_upsert")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
-                    plans.push(BulkPlan::Store(BulkStorePlan {
-                        action: action.to_string(),
-                        index: index.clone(),
-                        id: id.clone(),
-                        operation: WriteOperation::UpdateDocument {
-                            index,
-                            id,
-                            doc,
-                            doc_as_upsert: upsert,
-                        },
-                    }));
+                    match parse_update_body(&body) {
+                        Ok(update) => {
+                            plans.push(BulkPlan::Store(BulkStorePlan {
+                                action: action.to_string(),
+                                index: index.clone(),
+                                id: id.clone(),
+                                operation: WriteOperation::UpdateDocument {
+                                    index,
+                                    id,
+                                    doc: update.doc,
+                                    doc_as_upsert: update.doc_as_upsert,
+                                    upsert: update.upsert,
+                                },
+                            }));
+                        }
+                        Err(error) => {
+                            plans.push(BulkPlan::Immediate(json!({ action: bulk_error(error) })));
+                        }
+                    }
                 }
             }
             "delete" => {
@@ -876,7 +1049,14 @@ async fn handle_bulk(state: &AppState, request: &Request, path_index: Option<&st
                     let (status, result) = if plan.action == "create" {
                         (201, "created")
                     } else if plan.action == "update" {
-                        (200, "updated")
+                        (
+                            if doc.version == 1 { 201 } else { 200 },
+                            if doc.version == 1 {
+                                "created"
+                            } else {
+                                "updated"
+                            },
+                        )
                     } else if doc.version == 1 {
                         (201, "created")
                     } else {
@@ -1100,27 +1280,411 @@ fn handle_msearch(state: &AppState, request: &Request, path_index: Option<&str>)
     Response::json(200, json!({ "responses": responses }))
 }
 
-fn cat_indices(state: &AppState, api_name: &str) -> Response {
-    let db = state.store.database();
-    let rows = db
-        .indexes
-        .values()
-        .map(|index| {
+fn handle_stats(state: &AppState, parts: &[&str]) -> Response {
+    let (path_index, metrics) = stats_path(parts);
+    let indices = path_indices(path_index, "_stats");
+    let metrics = match parse_stats_metrics(metrics) {
+        Ok(metrics) => metrics,
+        Err(error) => return store_error(error),
+    };
+    match state
+        .store
+        .read_database(|db| index_stats(db, &indices, &metrics))
+    {
+        Ok(Ok(body)) => Response::json(200, body),
+        Ok(Err(error)) | Err(error) => store_error(error),
+    }
+}
+
+fn handle_field_mapping(state: &AppState, request: &Request, parts: &[&str]) -> Response {
+    let (path_index, fields) = if parts.first() == Some(&"_mapping") {
+        (None, parts.get(2).copied())
+    } else {
+        (parts.first().copied(), parts.get(3).copied())
+    };
+    let Some(fields) = fields else {
+        return parse_error("field mapping requires field names".to_string());
+    };
+    let fields = fields
+        .split(',')
+        .filter(|field| !field.trim().is_empty())
+        .map(|field| field.trim().to_string())
+        .collect::<Vec<_>>();
+    let include_defaults = request.query_value("include_defaults") == Some("true");
+    let indices = path_indices(path_index, "_mapping");
+    match state
+        .store
+        .read_database(|db| field_mapping_response(db, &indices, &fields, include_defaults))
+    {
+        Ok(Ok(body)) => Response::json(200, body),
+        Ok(Err(error)) | Err(error) => store_error(error),
+    }
+}
+
+fn cat_indices(state: &AppState, request: &Request, api_name: &str) -> Response {
+    let parts = segments(&request.path);
+    let path_index = parts.get(2).copied();
+    match state.store.read_database(|db| {
+        let names = resolve_index_patterns(db, &path_indices(path_index, "_cat/indices"))?;
+        let rows = names
+            .iter()
+            .filter_map(|name| db.indexes.get(name))
+            .map(|index| {
+                let store_bytes = index.store_size_bytes;
+                json!({
+                    "health": "green",
+                    "status": "open",
+                    "index": index.name,
+                    "uuid": format!("opensearch-lite-{}", index.name),
+                    "pri": index_setting_u64(index, "number_of_shards", 1).to_string(),
+                    "rep": index_setting_u64(index, "number_of_replicas", 0).to_string(),
+                    "docs.count": index.documents.len().to_string(),
+                    "docs.deleted": index.tombstones.len().to_string(),
+                    "store.size": format!("{store_bytes}b"),
+                    "pri.store.size": format!("{store_bytes}b")
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(Value::Array(rows))
+    }) {
+        Ok(Ok(rows)) => Response::json(200, rows).compatibility_signal(api_name, "best_effort"),
+        Ok(Err(error)) | Err(error) => store_error(error),
+    }
+}
+
+fn index_stats(db: &Database, requested: &[String], metrics: &[StatsMetric]) -> StoreResult<Value> {
+    let names = resolve_index_patterns(db, requested)?;
+    let mut indices = serde_json::Map::new();
+    let mut all_docs = 0usize;
+    let mut all_deleted = 0usize;
+    let mut all_store = 0usize;
+    let mut total_shards = 0u64;
+
+    for name in names {
+        let Some(index) = db.indexes.get(&name) else {
+            continue;
+        };
+        let store_bytes = index.store_size_bytes;
+        let stats = stats_block(index, store_bytes, metrics);
+        all_docs += index.documents.len();
+        all_deleted += index.tombstones.len();
+        all_store += store_bytes;
+        total_shards += index_total_shards(index);
+        indices.insert(
+            name.clone(),
             json!({
+                "uuid": format!("opensearch-lite-{name}"),
                 "health": "green",
                 "status": "open",
-                "index": index.name,
-                "uuid": format!("opensearch-lite-{}", index.name),
-                "pri": "1",
-                "rep": "0",
-                "docs.count": index.documents.len().to_string(),
-                "docs.deleted": index.tombstones.len().to_string(),
-                "store.size": "0b",
-                "pri.store.size": "0b"
-            })
-        })
-        .collect::<Vec<_>>();
-    Response::json(200, Value::Array(rows)).compatibility_signal(api_name, "best_effort")
+                "primaries": stats,
+                "total": stats
+            }),
+        );
+    }
+
+    let all = aggregate_stats_block(all_docs, all_deleted, all_store, metrics);
+    Ok(json!({
+        "_shards": {
+            "total": total_shards,
+            "successful": total_shards,
+            "failed": 0
+        },
+        "_all": {
+            "primaries": all,
+            "total": all
+        },
+        "indices": indices
+    }))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatsMetric {
+    Docs,
+    Store,
+    Indexing,
+    Search,
+    Get,
+}
+
+fn stats_path<'a>(parts: &'a [&'a str]) -> (Option<&'a str>, Option<&'a str>) {
+    if parts.first() == Some(&"_stats") {
+        (None, parts.get(1).copied())
+    } else {
+        (parts.first().copied(), parts.get(2).copied())
+    }
+}
+
+fn parse_stats_metrics(metric_path: Option<&str>) -> StoreResult<Vec<StatsMetric>> {
+    let Some(metric_path) = metric_path else {
+        return Ok(all_stats_metrics());
+    };
+    let mut metrics = Vec::new();
+    for metric in metric_path.split(',').filter(|metric| !metric.is_empty()) {
+        let parsed = match metric {
+            "_all" => {
+                metrics.extend(all_stats_metrics());
+                continue;
+            }
+            "docs" => StatsMetric::Docs,
+            "store" => StatsMetric::Store,
+            "indexing" => StatsMetric::Indexing,
+            "search" => StatsMetric::Search,
+            "get" => StatsMetric::Get,
+            other => {
+                let suggestion = if other == "fieldata" {
+                    " -> did you mean [fielddata]?"
+                } else {
+                    ""
+                };
+                return Err(StoreError::new(
+                    400,
+                    "illegal_argument_exception",
+                    format!(
+                        "request [/_stats/{other}] contains unrecognized metric: [{other}]{suggestion}"
+                    ),
+                ));
+            }
+        };
+        if !metrics.contains(&parsed) {
+            metrics.push(parsed);
+        }
+    }
+    if metrics.is_empty() {
+        Ok(all_stats_metrics())
+    } else {
+        Ok(metrics)
+    }
+}
+
+fn all_stats_metrics() -> Vec<StatsMetric> {
+    vec![
+        StatsMetric::Docs,
+        StatsMetric::Store,
+        StatsMetric::Indexing,
+        StatsMetric::Search,
+        StatsMetric::Get,
+    ]
+}
+
+fn stats_block(
+    index: &crate::storage::IndexMetadata,
+    store_bytes: usize,
+    metrics: &[StatsMetric],
+) -> Value {
+    aggregate_stats_block(
+        index.documents.len(),
+        index.tombstones.len(),
+        store_bytes,
+        metrics,
+    )
+}
+
+fn aggregate_stats_block(
+    docs: usize,
+    deleted: usize,
+    store_bytes: usize,
+    metrics: &[StatsMetric],
+) -> Value {
+    let mut block = serde_json::Map::new();
+    if metrics.contains(&StatsMetric::Docs) {
+        block.insert(
+            "docs".to_string(),
+            json!({ "count": docs, "deleted": deleted }),
+        );
+    }
+    if metrics.contains(&StatsMetric::Store) {
+        block.insert(
+            "store".to_string(),
+            json!({ "size_in_bytes": store_bytes, "reserved_in_bytes": 0 }),
+        );
+    }
+    if metrics.contains(&StatsMetric::Indexing) {
+        block.insert(
+            "indexing".to_string(),
+            json!({ "index_total": docs, "index_time_in_millis": 0 }),
+        );
+    }
+    if metrics.contains(&StatsMetric::Search) {
+        block.insert(
+            "search".to_string(),
+            json!({ "query_total": 0, "query_time_in_millis": 0 }),
+        );
+    }
+    if metrics.contains(&StatsMetric::Get) {
+        block.insert(
+            "get".to_string(),
+            json!({ "total": 0, "time_in_millis": 0 }),
+        );
+    }
+    Value::Object(block)
+}
+
+fn field_mapping_response(
+    db: &Database,
+    requested: &[String],
+    fields: &[String],
+    include_defaults: bool,
+) -> StoreResult<Value> {
+    let names = resolve_index_patterns(db, requested)?;
+    let mut output = serde_json::Map::new();
+    for name in names {
+        let Some(index) = db.indexes.get(&name) else {
+            continue;
+        };
+        let mut mappings = serde_json::Map::new();
+        for field in fields {
+            for (field_name, mut mapping) in field_mappings_for_request(&index.mappings, field) {
+                if include_defaults {
+                    add_mapping_defaults(&mut mapping);
+                }
+                mappings.insert(
+                    field_name.clone(),
+                    json!({
+                        "full_name": field_name,
+                        "mapping": { field_name: mapping }
+                    }),
+                );
+            }
+        }
+        output.insert(name.clone(), json!({ "mappings": mappings }));
+    }
+    Ok(Value::Object(output))
+}
+
+fn field_mappings_for_request(mappings: &Value, field: &str) -> Vec<(String, Value)> {
+    if field.contains('*') {
+        let mut fields = Vec::new();
+        collect_mapping_fields(mappings, "", &mut fields);
+        fields
+            .into_iter()
+            .filter(|(field_name, _)| wildcard_matches(field, field_name))
+            .collect()
+    } else {
+        mapping_for_field(mappings, field)
+            .map(|mapping| vec![(field.to_string(), mapping)])
+            .unwrap_or_default()
+    }
+}
+
+fn collect_mapping_fields(mappings: &Value, prefix: &str, fields: &mut Vec<(String, Value)>) {
+    let Some(properties) = mappings.get("properties").and_then(Value::as_object) else {
+        return;
+    };
+    for (name, mapping) in properties {
+        let full_name = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        if mapping.get("type").is_some() || mapping.get("properties").is_none() {
+            fields.push((full_name.clone(), mapping.clone()));
+        }
+        collect_mapping_fields(mapping, &full_name, fields);
+    }
+}
+
+fn mapping_for_field(mappings: &Value, field: &str) -> Option<Value> {
+    let mut properties = mappings.get("properties")?;
+    let mut segments = field.split('.').peekable();
+    while let Some(segment) = segments.next() {
+        let mapping = properties.get(segment)?;
+        if segments.peek().is_none() {
+            return Some(mapping.clone());
+        }
+        properties = mapping.get("properties")?;
+    }
+    None
+}
+
+fn source_disabled(mappings: &Value) -> bool {
+    mappings
+        .get("_source")
+        .and_then(|source| source.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(false)
+}
+
+fn add_mapping_defaults(mapping: &mut Value) {
+    if mapping.get("type").and_then(Value::as_str) == Some("text")
+        && mapping.get("analyzer").is_none()
+    {
+        mapping["analyzer"] = json!("default");
+    }
+}
+
+fn resolve_index_patterns(db: &Database, requested: &[String]) -> StoreResult<Vec<String>> {
+    if requested.is_empty()
+        || requested
+            .iter()
+            .any(|index| matches!(index.as_str(), "_all" | "*"))
+    {
+        return Ok(db.indexes.keys().cloned().collect());
+    }
+    let mut names = Vec::new();
+    for requested in requested {
+        if requested.contains('*') {
+            names.extend(
+                db.indexes
+                    .keys()
+                    .filter(|name| wildcard_matches(requested, name))
+                    .cloned(),
+            );
+            continue;
+        }
+        let Some(name) = db.resolve_index(requested) else {
+            return Err(StoreError::new(
+                404,
+                "index_not_found_exception",
+                format!("no such index [{requested}]"),
+            ));
+        };
+        names.push(name);
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn index_setting_u64(index: &crate::storage::IndexMetadata, key: &str, default: u64) -> u64 {
+    index
+        .settings
+        .get("index")
+        .and_then(|settings| settings.get(key))
+        .or_else(|| index.settings.get(key))
+        .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()))
+        .unwrap_or(default)
+}
+
+fn index_total_shards(index: &crate::storage::IndexMetadata) -> u64 {
+    let primaries = index_setting_u64(index, "number_of_shards", 1);
+    let replicas = index_setting_u64(index, "number_of_replicas", 0);
+    primaries.saturating_mul(replicas.saturating_add(1))
+}
+
+fn wildcard_matches(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    let mut remaining = value;
+    let mut first = true;
+    for part in pattern.split('*') {
+        if part.is_empty() {
+            first = false;
+            continue;
+        }
+        if first && !pattern.starts_with('*') {
+            let Some(stripped) = remaining.strip_prefix(part) else {
+                return false;
+            };
+            remaining = stripped;
+        } else if let Some(position) = remaining.find(part) {
+            remaining = &remaining[position + part.len()..];
+        } else {
+            return false;
+        }
+        first = false;
+    }
+    pattern.ends_with('*') || remaining.is_empty()
 }
 
 fn doc_write_response(
@@ -1130,18 +1694,24 @@ fn doc_write_response(
     status: u16,
     result: &str,
 ) -> Response {
-    Response::json(
-        status,
-        json!({
-            "_index": index,
-            "_id": id,
-            "_version": doc.version,
-            "result": result,
-            "_shards": { "total": 1, "successful": 1, "failed": 0 },
-            "_seq_no": doc.seq_no,
-            "_primary_term": doc.primary_term
-        }),
-    )
+    Response::json(status, doc_write_body(index, id, doc, result))
+}
+
+fn doc_write_body(
+    index: &str,
+    id: &str,
+    doc: &crate::storage::StoredDocument,
+    result: &str,
+) -> Value {
+    json!({
+        "_index": index,
+        "_id": id,
+        "_version": doc.version,
+        "result": result,
+        "_shards": { "total": 1, "successful": 1, "failed": 0 },
+        "_seq_no": doc.seq_no,
+        "_primary_term": doc.primary_term
+    })
 }
 
 fn bulk_doc_result(
@@ -1652,6 +2222,7 @@ mod tests {
                 aliases: BTreeSet::new(),
                 documents,
                 tombstones: BTreeMap::new(),
+                store_size_bytes: 100,
             },
         );
         Database {
