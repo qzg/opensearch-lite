@@ -9,6 +9,22 @@ use yaml_rest_runner::run_selected_yaml_tests;
 async fn selected_upstream_yaml_rest_tests_run_against_local_router() {
     let cases = [
         (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/bulk/10_basic.yml",
+            &["Array of objects"][..],
+        ),
+        (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/create/10_with_id.yml",
+            &["Create with ID"][..],
+        ),
+        (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/delete/10_basic.yml",
+            &["Basic"][..],
+        ),
+        (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/get/10_basic.yml",
+            &["Basic"][..],
+        ),
+        (
             "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.refresh/10_basic.yml",
             &[
                 "Indices refresh test _all",
@@ -53,6 +69,10 @@ async fn selected_upstream_yaml_rest_tests_run_against_local_router() {
             ][..],
         ),
         (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.get_alias/20_empty.yml",
+            &["Check empty aliases when getting all aliases via /_alias"][..],
+        ),
+        (
             "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.get_field_mapping/10_basic.yml",
             &[
                 "Get field mapping with no index",
@@ -74,6 +94,27 @@ async fn selected_upstream_yaml_rest_tests_run_against_local_router() {
             ][..],
         ),
         (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.put_index_template/10_basic.yml",
+            &[
+                "Put index template",
+                "Put multiple index templates",
+                "Put index template with 'create' flag",
+                "Put index template without index_patterns",
+            ][..],
+        ),
+        (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.get_index_template/10_basic.yml",
+            &[
+                "Get index template",
+                "Get all index templates",
+                "Get index template with local flag",
+            ][..],
+        ),
+        (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.get_index_template/20_get_missing.yml",
+            &["Get missing template"][..],
+        ),
+        (
             "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.stats/10_index.yml",
             &[
                 "Index - blank",
@@ -85,6 +126,24 @@ async fn selected_upstream_yaml_rest_tests_run_against_local_router() {
                 "Index - pattern",
                 "Indices stats unrecognized parameter",
             ][..],
+        ),
+        (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/search/10_source_filtering.yml",
+            &[
+                "_source: true",
+                "_source: false",
+                "no filtering",
+                "_source in body",
+                "_source_includes",
+                "_source_excludes",
+                "_source field1 field2",
+                "_source.include field1 field2",
+                "_source includes and excludes",
+            ][..],
+        ),
+        (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/search/20_default_values.yml",
+            &["Basic search", "Search with new response format"][..],
         ),
         (
             "vendor/opensearch-rest-api-spec/rest-api-spec/test/update/20_doc_upsert.yml",

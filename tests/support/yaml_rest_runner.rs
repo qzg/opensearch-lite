@@ -85,6 +85,7 @@ struct Runner<'a> {
     test_name: &'a str,
     state: opensearch_lite::server::AppState,
     last_response: Option<Response>,
+    skip_reason: Option<String>,
 }
 
 impl<'a> Runner<'a> {
@@ -94,11 +95,15 @@ impl<'a> Runner<'a> {
             test_name,
             state: ephemeral_state(),
             last_response: None,
+            skip_reason: None,
         }
     }
 
     async fn run_steps(&mut self, phase: &str, steps: &[YamlValue]) {
         for (index, step) in steps.iter().enumerate() {
+            if self.skip_reason.is_some() {
+                break;
+            }
             self.run_step(phase, index, step).await;
         }
     }
@@ -109,6 +114,11 @@ impl<'a> Runner<'a> {
             None => self.fail(format!("{phase} step {index} should contain one action")),
         };
         match action.0.as_str() {
+            "skip" => {
+                if let Some(reason) = skip_reason(action.1) {
+                    self.skip_reason = Some(reason);
+                }
+            }
             "do" => {
                 let request = RestCall::from_do(action.1)
                     .unwrap_or_else(|error| self.fail(format!("{phase} step {index}: {error}")));
@@ -165,7 +175,7 @@ impl<'a> Runner<'a> {
                 let path = yaml_string(action.1).unwrap_or_else(|| {
                     self.fail(format!("{phase} step {index} is_true path is malformed"))
                 });
-                if !is_truthy(self.response_path(&path)) {
+                if !self.is_truthy_path(&path) {
                     self.fail(format!(
                         "{phase} step {index}: expected {path} to be present/truthy"
                     ));
@@ -175,7 +185,7 @@ impl<'a> Runner<'a> {
                 let path = yaml_string(action.1).unwrap_or_else(|| {
                     self.fail(format!("{phase} step {index} is_false path is malformed"))
                 });
-                if is_truthy(self.response_path(&path)) {
+                if self.is_truthy_path(&path) {
                     self.fail(format!(
                         "{phase} step {index}: expected {path} to be absent/falsey"
                     ));
@@ -196,6 +206,17 @@ impl<'a> Runner<'a> {
             .body
             .as_ref()
             .and_then(|body| value_path(body, path))
+    }
+
+    fn is_truthy_path(&self, path: &str) -> bool {
+        if path.is_empty() {
+            return self
+                .last_response
+                .as_ref()
+                .map(|response| response.status < 400)
+                .unwrap_or(false);
+        }
+        is_truthy(self.response_path(path))
     }
 
     fn fail(&self, message: String) -> ! {
@@ -229,8 +250,11 @@ impl RestCall {
             .iter()
             .find_map(|(key, value)| {
                 let key = yaml_string(key)?;
-                (!matches!(key.as_str(), "catch" | "warnings" | "allowed_warnings"))
-                    .then_some((key, value))
+                (!matches!(
+                    key.as_str(),
+                    "catch" | "headers" | "warnings" | "allowed_warnings"
+                ))
+                .then_some((key, value))
             })
             .ok_or_else(|| "do step should contain an API call".to_string())?;
         let params = params.as_mapping().cloned().unwrap_or_else(YamlMap::new);
@@ -238,13 +262,23 @@ impl RestCall {
 
         let mut call = match api.as_str() {
             "bulk" => Self::bulk(&api, &params),
+            "create" => Self::create(&api, &params),
+            "delete" => Self::delete(&api, &params),
             "cluster.health" => Self::cluster_health(&api, &params),
             "count" => Self::count(&api, &params),
             "get" => Self::get(&api, &params),
             "get_source" => Self::get_source(&api, &params),
             "index" => Self::index(&api, &params),
             "indices.create" => Self::indices_create(&api, &params),
+            "indices.delete_index_template" => Self::indices_delete_index_template(&api, &params),
+            "indices.delete" => Self::indices_delete(&api, &params),
+            "indices.exists_alias" => Self::indices_exists_alias(&api, &params),
+            "indices.get" => Self::indices_get(&api, &params),
+            "indices.get_alias" => Self::indices_get_alias(&api, &params),
             "indices.get_field_mapping" => Self::indices_get_field_mapping(&api, &params),
+            "indices.get_index_template" => Self::indices_get_index_template(&api, &params),
+            "indices.put_alias" => Self::indices_put_alias(&api, &params),
+            "indices.put_index_template" => Self::indices_put_index_template(&api, &params),
             "indices.refresh" => Self::indices_refresh(&api, &params),
             "indices.stats" => Self::indices_stats(&api, &params),
             "mget" => Self::mget(&api, &params),
@@ -284,8 +318,36 @@ impl RestCall {
             api,
             Method::POST,
             index_path(index.as_deref(), "_bulk"),
-            query_params(params, &["refresh"]),
-            Body::Ndjson(required_string(params, "body")?),
+            query_params(params, &["refresh", "require_alias"]),
+            Body::Ndjson(required_ndjson(params, "body")?),
+        ))
+    }
+
+    fn create(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::PUT,
+            format!(
+                "/{}/_create/{}",
+                required_path(params, "index")?,
+                required_path(params, "id")?
+            ),
+            query_params(params, &["refresh", "routing"]),
+            Body::Json(required_json(params, "body")?),
+        ))
+    }
+
+    fn delete(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::DELETE,
+            format!(
+                "/{}/_doc/{}",
+                required_path(params, "index")?,
+                required_path(params, "id")?
+            ),
+            query_params(params, &["refresh", "routing"]),
+            Body::Empty,
         ))
     }
 
@@ -364,6 +426,64 @@ impl RestCall {
         ))
     }
 
+    fn indices_delete(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::DELETE,
+            format!("/{}", required_path(params, "index")?),
+            Vec::new(),
+            Body::Empty,
+        ))
+    }
+
+    fn indices_delete_index_template(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::DELETE,
+            format!("/_index_template/{}", required_path(params, "name")?),
+            Vec::new(),
+            Body::Empty,
+        ))
+    }
+
+    fn indices_exists_alias(api: &str, params: &YamlMap) -> Result<Self, String> {
+        let name = required_path(params, "name")?;
+        let index = path_list(params.get(yaml_key("index")));
+        Ok(Self::new(
+            api,
+            Method::HEAD,
+            index_path(index.as_deref(), &format!("_alias/{name}")),
+            Vec::new(),
+            Body::Empty,
+        ))
+    }
+
+    fn indices_get(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::GET,
+            format!("/{}", required_path(params, "index")?),
+            Vec::new(),
+            Body::Empty,
+        ))
+    }
+
+    fn indices_get_alias(api: &str, params: &YamlMap) -> Result<Self, String> {
+        let index = path_list(params.get(yaml_key("index")));
+        let name = path_list(params.get(yaml_key("name")));
+        let suffix = match name {
+            Some(name) => format!("_alias/{name}"),
+            None => "_alias".to_string(),
+        };
+        Ok(Self::new(
+            api,
+            Method::GET,
+            index_path(index.as_deref(), &suffix),
+            Vec::new(),
+            Body::Empty,
+        ))
+    }
+
     fn indices_get_field_mapping(api: &str, params: &YamlMap) -> Result<Self, String> {
         let index = path_list(params.get(yaml_key("index")));
         let fields = path_list(params.get(yaml_key("fields")))
@@ -374,6 +494,54 @@ impl RestCall {
             index_path(index.as_deref(), &format!("_mapping/field/{fields}")),
             query_params(params, &["include_defaults"]),
             Body::Empty,
+        ))
+    }
+
+    fn indices_get_index_template(api: &str, params: &YamlMap) -> Result<Self, String> {
+        let name = path_list(params.get(yaml_key("name")));
+        Ok(Self::new(
+            api,
+            Method::GET,
+            match name {
+                Some(name) => format!("/_index_template/{name}"),
+                None => "/_index_template".to_string(),
+            },
+            query_params(params, &["local"]),
+            Body::Empty,
+        ))
+    }
+
+    fn indices_put_alias(api: &str, params: &YamlMap) -> Result<Self, String> {
+        let body = params
+            .get(yaml_key("body"))
+            .map(yaml_to_json)
+            .unwrap_or_else(|| json!({}));
+        let index = body
+            .get("index")
+            .and_then(json_scalar_string)
+            .or_else(|| path_list(params.get(yaml_key("index"))))
+            .ok_or_else(|| "indices.put_alias requires [index]".to_string())?;
+        let name = body
+            .get("alias")
+            .and_then(json_scalar_string)
+            .or_else(|| path_list(params.get(yaml_key("name"))))
+            .ok_or_else(|| "indices.put_alias requires [name]".to_string())?;
+        Ok(Self::new(
+            api,
+            Method::PUT,
+            format!("/{index}/_alias/{name}"),
+            Vec::new(),
+            Body::Json(body),
+        ))
+    }
+
+    fn indices_put_index_template(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::PUT,
+            format!("/_index_template/{}", required_path(params, "name")?),
+            query_params(params, &["create"]),
+            Body::Json(required_json(params, "body")?),
         ))
     }
 
@@ -419,7 +587,18 @@ impl RestCall {
             api,
             Method::POST,
             index_path(index.as_deref(), "_search"),
-            query_params(params, &["rest_total_hits_as_int"]),
+            query_params(
+                params,
+                &[
+                    "rest_total_hits_as_int",
+                    "_source",
+                    "_source_includes",
+                    "_source_excludes",
+                    "from",
+                    "size",
+                    "track_total_hits",
+                ],
+            ),
             json_body(params),
         ))
     }
@@ -487,7 +666,10 @@ fn assert_response_status(call: &RestCall, response: &Response) -> Result<(), St
 fn catch_status(catch: &str) -> Result<u16, String> {
     match catch {
         "bad_request" | "request" => Ok(400),
+        "conflict" => Ok(409),
         "missing" => Ok(404),
+        "param" => Ok(400),
+        catch if catch.starts_with('/') => Ok(400),
         other => Err(format!("unsupported catch type [{other}]")),
     }
 }
@@ -525,6 +707,62 @@ fn yaml_key(key: &str) -> YamlValue {
     YamlValue::String(key.to_string())
 }
 
+fn skip_reason(value: &YamlValue) -> Option<String> {
+    let skip = value.as_mapping()?;
+    if let Some(version) = skip.get(yaml_key("version")).and_then(scalar_string) {
+        if version_matches_current(&version) {
+            return Some(format!("version range {version} matches local runner"));
+        }
+    }
+    let unsupported_features = skip
+        .get(yaml_key("features"))
+        .into_iter()
+        .flat_map(feature_values)
+        .filter(|feature| !supported_feature(feature))
+        .collect::<Vec<_>>();
+    if unsupported_features.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "unsupported YAML runner features: {}",
+            unsupported_features.join(", ")
+        ))
+    }
+}
+
+fn feature_values(value: &YamlValue) -> Vec<String> {
+    match value {
+        YamlValue::Sequence(values) => values.iter().filter_map(scalar_string).collect(),
+        value => scalar_string(value).into_iter().collect(),
+    }
+}
+
+fn supported_feature(feature: &str) -> bool {
+    matches!(feature, "allowed_warnings" | "headers" | "warnings")
+}
+
+fn version_matches_current(range: &str) -> bool {
+    let current = (3_u64, 6_u64, 0_u64);
+    let Some((low, high)) = range.split_once('-') else {
+        return parse_version(range.trim()) == Some(current);
+    };
+    let low = parse_version(low.trim());
+    let high = parse_version(high.trim());
+    low.map(|low| current >= low).unwrap_or(true)
+        && high.map(|high| current <= high).unwrap_or(true)
+}
+
+fn parse_version(value: &str) -> Option<(u64, u64, u64)> {
+    if value.is_empty() {
+        return None;
+    }
+    let mut parts = value.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
 fn scalar_string(value: &YamlValue) -> Option<String> {
     match value {
         YamlValue::String(value) => Some(value.clone()),
@@ -539,6 +777,15 @@ fn yaml_to_json(value: &YamlValue) -> Value {
     serde_json::to_value(value).expect("YAML value converts to JSON")
 }
 
+fn json_scalar_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
 fn required_json(params: &YamlMap, key: &str) -> Result<Value, String> {
     params
         .get(yaml_key(key))
@@ -546,11 +793,29 @@ fn required_json(params: &YamlMap, key: &str) -> Result<Value, String> {
         .ok_or_else(|| format!("required parameter [{key}] is missing"))
 }
 
-fn required_string(params: &YamlMap, key: &str) -> Result<String, String> {
-    params
+fn required_ndjson(params: &YamlMap, key: &str) -> Result<String, String> {
+    let value = params
         .get(yaml_key(key))
-        .and_then(scalar_string)
-        .ok_or_else(|| format!("required string parameter [{key}] is missing"))
+        .ok_or_else(|| format!("required NDJSON parameter [{key}] is missing"))?;
+    if let Some(value) = scalar_string(value) {
+        return Ok(value);
+    }
+    let values = value
+        .as_sequence()
+        .ok_or_else(|| format!("NDJSON parameter [{key}] should be a string or sequence"))?;
+    let mut output = String::new();
+    for value in values {
+        if let Some(line) = scalar_string(value) {
+            output.push_str(&line);
+        } else {
+            output.push_str(
+                &serde_json::to_string(&yaml_to_json(value))
+                    .expect("YAML NDJSON item should serialize"),
+            );
+        }
+        output.push('\n');
+    }
+    Ok(output)
 }
 
 fn required_path(params: &YamlMap, key: &str) -> Result<String, String> {

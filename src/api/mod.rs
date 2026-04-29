@@ -261,6 +261,15 @@ async fn handle_template(state: &AppState, request: &Request, name: Option<&str>
             let Some(name) = name else {
                 return parse_error("template name is required".to_string());
             };
+            if request.query_value("create") == Some("true")
+                && state.store.database().templates.contains_key(name)
+            {
+                return store_error(StoreError::new(
+                    400,
+                    "resource_already_exists_exception",
+                    format!("index template [{name}] already exists"),
+                ));
+            }
             match request.body_json() {
                 Ok(body) => {
                     let name = name.to_string();
@@ -278,6 +287,15 @@ async fn handle_template(state: &AppState, request: &Request, name: Option<&str>
         }
         Method::GET => {
             let db = state.store.database();
+            if let Some(name) = name {
+                if !db.templates.contains_key(name) {
+                    return store_error(StoreError::new(
+                        404,
+                        "index_template_missing_exception",
+                        format!("index template [{name}] missing"),
+                    ));
+                }
+            }
             let templates = db
                 .templates
                 .iter()
@@ -288,7 +306,7 @@ async fn handle_template(state: &AppState, request: &Request, name: Option<&str>
                 .map(|(name, template)| {
                     json!({
                         "name": name,
-                        "index_template": template.raw
+                        "index_template": normalize_index_template_response(&template.raw)
                     })
                 })
                 .collect::<Vec<_>>();
@@ -320,6 +338,62 @@ async fn handle_template(state: &AppState, request: &Request, name: Option<&str>
             }
         }
         _ => unsupported("indices.put_index_template"),
+    }
+}
+
+fn normalize_index_template_response(raw: &Value) -> Value {
+    let mut raw = raw.clone();
+    if let Some(pattern) = raw.get("index_patterns").and_then(Value::as_str) {
+        raw["index_patterns"] = json!([pattern]);
+    }
+    if let Some(settings) = raw
+        .get_mut("template")
+        .and_then(|template| template.get_mut("settings"))
+    {
+        normalize_settings_response(settings);
+    }
+    if let Some(aliases) = raw
+        .get_mut("template")
+        .and_then(|template| template.get_mut("aliases"))
+        .and_then(Value::as_object_mut)
+    {
+        for metadata in aliases.values_mut() {
+            *metadata = normalize_alias_metadata(metadata.take());
+        }
+    }
+    raw
+}
+
+fn normalize_settings_response(settings: &mut Value) {
+    let Some(object) = settings.as_object_mut() else {
+        return;
+    };
+    if object.contains_key("index") {
+        if let Some(index) = object.get_mut("index") {
+            stringify_object_values(index);
+        }
+        return;
+    }
+    let mut index = serde_json::Map::new();
+    for (key, value) in std::mem::take(object) {
+        index.insert(key, stringify_value(value));
+    }
+    object.insert("index".to_string(), Value::Object(index));
+}
+
+fn stringify_object_values(value: &mut Value) {
+    if let Some(object) = value.as_object_mut() {
+        for value in object.values_mut() {
+            *value = stringify_value(value.take());
+        }
+    }
+}
+
+fn stringify_value(value: Value) -> Value {
+    match value {
+        Value::Number(number) => Value::String(number.to_string()),
+        Value::Bool(value) => Value::String(value.to_string()),
+        value => value,
     }
 }
 
@@ -414,8 +488,15 @@ async fn handle_alias(state: &AppState, request: &Request, parts: &[&str]) -> Re
     match (request.method.clone(), parts) {
         (Method::PUT, [index, "_alias", alias]) => match request.body_json() {
             Ok(body) => {
-                let index = index.to_string();
-                let alias = alias.to_string();
+                let index = body
+                    .get("index")
+                    .and_then(json_scalar_string)
+                    .unwrap_or_else(|| index.to_string());
+                let alias = body
+                    .get("alias")
+                    .and_then(json_scalar_string)
+                    .unwrap_or_else(|| alias.to_string());
+                let body = normalize_alias_metadata(body);
                 match run_store(state.store.clone(), move |store| {
                     store.put_alias(&index, &alias, body)
                 })
@@ -435,6 +516,7 @@ async fn handle_alias(state: &AppState, request: &Request, parts: &[&str]) -> Re
         (Method::HEAD, [index, "_aliases", alias]) => {
             alias_exists_response(state, Some(index), alias)
         }
+        (Method::GET, ["_alias"]) => alias_response(state, None, None),
         (Method::GET, ["_alias", alias]) => alias_response(state, None, Some(alias)),
         (Method::GET, ["_aliases"]) => alias_response(state, None, None),
         (Method::GET, [index, "_alias", alias]) => alias_response(state, Some(index), Some(alias)),
@@ -496,9 +578,9 @@ async fn handle_alias_actions(state: &AppState, request: &Request) -> Response {
         let alias = alias.to_string();
         let result = match kind.as_str() {
             "add" => {
-                let raw = meta.clone();
+                let raw = normalize_alias_metadata(Value::Object(meta.clone()));
                 run_store(state.store.clone(), move |store| {
-                    store.put_alias(&index, &alias, Value::Object(raw))
+                    store.put_alias(&index, &alias, raw)
                 })
                 .await
             }
@@ -523,26 +605,37 @@ async fn handle_alias_actions(state: &AppState, request: &Request) -> Response {
 
 fn alias_response(state: &AppState, index: Option<&str>, alias: Option<&str>) -> Response {
     let db = state.store.database();
-    if let Some(index) = index {
-        if db.resolve_index(index).is_none() {
-            return store_error(StoreError::new(
-                404,
-                "index_not_found_exception",
-                format!("no such index [{index}]"),
-            ));
+    let requested_index = match index {
+        Some(index) => {
+            let Some(index_name) = db.resolve_index(index) else {
+                return store_error(StoreError::new(
+                    404,
+                    "index_not_found_exception",
+                    format!("no such index [{index}]"),
+                ));
+            };
+            Some(index_name)
+        }
+        None => None,
+    };
+    let mut output = serde_json::Map::new();
+    if alias.is_none() {
+        for index_name in alias_response_index_names(&db, requested_index.as_deref()) {
+            output_alias_index_entry(&mut output, &index_name);
         }
     }
-    let mut output = serde_json::Map::new();
     for (alias_name, meta) in &db.aliases {
         if alias.map(|alias| alias != alias_name).unwrap_or(false) {
             continue;
         }
-        if index.map(|index| index != meta.index).unwrap_or(false) {
+        if requested_index
+            .as_ref()
+            .map(|index| index != &meta.index)
+            .unwrap_or(false)
+        {
             continue;
         }
-        let entry = output
-            .entry(meta.index.clone())
-            .or_insert_with(|| json!({ "aliases": {} }));
+        let entry = output_alias_index_entry(&mut output, &meta.index);
         entry["aliases"][alias_name] = meta.raw.clone();
     }
     if output.is_empty() && alias.is_some() {
@@ -553,6 +646,41 @@ fn alias_response(state: &AppState, index: Option<&str>, alias: Option<&str>) ->
         ));
     }
     Response::json(200, Value::Object(output))
+}
+
+fn alias_response_index_names(db: &Database, requested_index: Option<&str>) -> Vec<String> {
+    match requested_index {
+        Some(index) => vec![index.to_string()],
+        None => db.indexes.keys().cloned().collect(),
+    }
+}
+
+fn output_alias_index_entry<'a>(
+    output: &'a mut serde_json::Map<String, Value>,
+    index: &str,
+) -> &'a mut Value {
+    output
+        .entry(index.to_string())
+        .or_insert_with(|| json!({ "aliases": {} }))
+}
+
+fn normalize_alias_metadata(raw: Value) -> Value {
+    let Value::Object(mut object) = raw else {
+        return json!({});
+    };
+    object.remove("index");
+    object.remove("indices");
+    object.remove("alias");
+    object.remove("aliases");
+    if let Some(routing) = object.remove("routing") {
+        object
+            .entry("index_routing".to_string())
+            .or_insert_with(|| routing.clone());
+        object
+            .entry("search_routing".to_string())
+            .or_insert(routing);
+    }
+    Value::Object(object)
 }
 
 fn alias_exists_response(state: &AppState, index: Option<&str>, alias: &str) -> Response {
@@ -685,6 +813,10 @@ async fn handle_document(state: &AppState, request: &Request, parts: &[&str]) ->
             let Some(id) = id else {
                 return parse_error("document id is required".to_string());
             };
+            let deleted_version = state
+                .store
+                .get_document(index, id)
+                .map(|document| document.version.saturating_add(1));
             let index = index.to_string();
             let id = id.to_string();
             let index_for_store = index.clone();
@@ -694,15 +826,20 @@ async fn handle_document(state: &AppState, request: &Request, parts: &[&str]) ->
             })
             .await
             {
-                Ok(found) => Response::json(
-                    if found { 200 } else { 404 },
-                    json!({
+                Ok(found) => {
+                    let mut body = json!({
                         "_index": index,
                         "_id": id,
                         "result": if found { "deleted" } else { "not_found" },
                         "_shards": { "total": 1, "successful": 1, "failed": 0 }
-                    }),
-                ),
+                    });
+                    if found {
+                        if let Some(version) = deleted_version {
+                            body["_version"] = json!(version);
+                        }
+                    }
+                    Response::json(if found { 200 } else { 404 }, body)
+                }
                 Err(error) => store_error(error),
             }
         }
@@ -1090,10 +1227,13 @@ async fn handle_bulk(state: &AppState, request: &Request, path_index: Option<&st
 }
 
 fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) -> Response {
-    let body = match request.body_json() {
+    let mut body = match request.body_json() {
         Ok(body) => body,
         Err(error) => return parse_error(error),
     };
+    if let Some(source_filter) = source_filter_from_query(&request.query) {
+        body["_source"] = source_filter;
+    }
     let from = numeric_param(&body, &request.query, "from", 0);
     let size = numeric_param(&body, &request.query, "size", 10);
     if from.saturating_add(size) > state.config.max_result_window {

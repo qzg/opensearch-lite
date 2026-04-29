@@ -52,15 +52,18 @@ pub fn search(db: &Database, request: SearchRequest) -> Result<Value, String> {
         .skip(offset)
         .take(request.size)
         .map(|hit| {
-            json!({
+            let mut response = json!({
                 "_index": hit.index,
                 "_id": hit.doc.id,
                 "_score": hit.score,
                 "_version": hit.doc.version,
                 "_seq_no": hit.doc.seq_no,
-                "_primary_term": hit.doc.primary_term,
-                "_source": filter_source(&hit.doc.source, request.body.get("_source"))
-            })
+                "_primary_term": hit.doc.primary_term
+            });
+            if request.body.get("_source") != Some(&Value::Bool(false)) {
+                response["_source"] = filter_source(&hit.doc.source, request.body.get("_source"));
+            }
+            response
         })
         .collect::<Vec<_>>();
 

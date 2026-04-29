@@ -537,17 +537,7 @@ impl Store {
     }
 
     pub fn put_template(&self, name: &str, body: Value) -> StoreResult<()> {
-        let patterns = body
-            .get("index_patterns")
-            .and_then(Value::as_array)
-            .map(|patterns| {
-                patterns
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let patterns = index_patterns(&body);
         self.commit(Mutation::PutTemplate {
             name: name.to_string(),
             index_patterns: patterns,
@@ -699,6 +689,26 @@ impl Store {
                     ));
                 }
             }
+            Mutation::PutTemplate {
+                name,
+                index_patterns,
+                ..
+            } => {
+                if name.trim().is_empty() {
+                    return Err(StoreError::new(
+                        400,
+                        "invalid_index_template_exception",
+                        "index template name must not be empty",
+                    ));
+                }
+                if index_patterns.is_empty() {
+                    return Err(StoreError::new(
+                        400,
+                        "invalid_index_template_exception",
+                        "index template requires at least one index pattern",
+                    ));
+                }
+            }
             Mutation::IndexDocument { index, id, .. }
             | Mutation::CreateDocument { index, id, .. }
             | Mutation::UpdateDocument { index, id, .. } => {
@@ -763,6 +773,22 @@ impl Store {
                     return Err(not_found(
                         "index_not_found_exception",
                         format!("no such index [{index}]"),
+                    ));
+                }
+            }
+            Mutation::PutAlias { alias, .. } => {
+                if alias.trim().is_empty() || alias.contains('*') {
+                    return Err(StoreError::new(
+                        400,
+                        "invalid_alias_name_exception",
+                        format!("invalid alias name [{alias}]"),
+                    ));
+                }
+                if db.indexes.contains_key(alias) {
+                    return Err(StoreError::new(
+                        400,
+                        "invalid_alias_name_exception",
+                        format!("alias [{alias}] conflicts with an existing index"),
                     ));
                 }
             }
@@ -844,6 +870,18 @@ fn extract_index_config(body: &Value) -> (Value, Value) {
         body.get("settings").cloned().unwrap_or_else(|| json!({})),
         body.get("mappings").cloned().unwrap_or_else(|| json!({})),
     )
+}
+
+fn index_patterns(body: &Value) -> Vec<String> {
+    match body.get("index_patterns") {
+        Some(Value::String(pattern)) => vec![pattern.clone()],
+        Some(Value::Array(patterns)) => patterns
+            .iter()
+            .filter_map(Value::as_str)
+            .map(ToString::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn template_config_for(db: &Database, index_name: &str) -> (Value, Value) {

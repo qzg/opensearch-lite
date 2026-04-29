@@ -49,6 +49,9 @@ OPENSEARCH_PARITY_DOCKER=1 scripts/run-opensearch-parity-smoke.sh
 
 The ignored client smoke tests invoke the matching scripts under `scripts/`.
 Those scripts can also be run directly when debugging a single client.
+Selected upstream REST YAML fixtures run through
+`cargo test --test opensearch_yaml_runner`; see `docs/yaml-parity.md` for the
+current fixture set and runner policy.
 
 The parity smoke can also target an existing OpenSearch 3.x endpoint with
 `OPENSEARCH_URL=http://127.0.0.1:9200`.
