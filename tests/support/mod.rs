@@ -7,6 +7,7 @@ use opensearch_lite::{
 };
 use serde_json::Value;
 
+#[allow(dead_code)]
 pub async fn call(state: &AppState, method: Method, path: &str, body: Value) -> Response {
     let body = if body.is_null() {
         Bytes::new()

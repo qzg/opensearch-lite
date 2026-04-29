@@ -1125,7 +1125,14 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
         )
     });
     match search_result {
-        Ok(Ok(body)) => Response::json(200, body),
+        Ok(Ok(mut body)) => {
+            if request.query_value("rest_total_hits_as_int") == Some("true") {
+                if let Some(total) = body["hits"]["total"]["value"].as_u64() {
+                    body["hits"]["total"] = json!(total);
+                }
+            }
+            Response::json(200, body)
+        }
         Ok(Err(error)) => open_search_error(
             400,
             "x_content_parse_exception",
@@ -1204,16 +1211,20 @@ fn handle_mget(state: &AppState, request: &Request, path_index: Option<&str>) ->
 
 fn handle_refresh(state: &AppState, path_index: Option<&str>) -> Response {
     let indices = path_indices(path_index, "_refresh");
-    match state
-        .store
-        .read_database(|db| validate_search_indices(db, &indices))
-    {
-        Ok(Ok(())) => Response::json(
+    match state.store.read_database(|db| {
+        let names = resolve_index_patterns(db, &indices)?;
+        Ok(names
+            .iter()
+            .filter_map(|name| db.indexes.get(name))
+            .map(index_total_shards)
+            .sum::<u64>())
+    }) {
+        Ok(Ok(total_shards)) => Response::json(
             200,
             json!({
                 "_shards": {
-                    "total": 1,
-                    "successful": 1,
+                    "total": total_shards,
+                    "successful": total_shards,
                     "failed": 0
                 }
             }),
@@ -1821,10 +1832,10 @@ fn mget_items(
     if let Some(ids) = body.get("ids").and_then(Value::as_array) {
         return ids
             .iter()
-            .filter_map(Value::as_str)
+            .filter_map(json_scalar_string)
             .map(|id| MgetItem {
                 index: path_index.map(ToString::to_string),
-                id: id.to_string(),
+                id,
                 source_filter: request_source_filter.clone(),
             })
             .collect();
@@ -1834,14 +1845,14 @@ fn mget_items(
         .map(|docs| {
             docs.iter()
                 .filter_map(|doc| {
-                    let id = doc.get("_id").and_then(Value::as_str)?;
+                    let id = doc.get("_id").and_then(json_scalar_string)?;
                     Some(MgetItem {
                         index: doc
                             .get("_index")
                             .and_then(Value::as_str)
                             .or(path_index)
                             .map(ToString::to_string),
-                        id: id.to_string(),
+                        id,
                         source_filter: doc
                             .get("_source")
                             .cloned()
@@ -1851,6 +1862,15 @@ fn mget_items(
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn json_scalar_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 fn source_filter_from_query(query: &[(String, String)]) -> Option<Value> {
