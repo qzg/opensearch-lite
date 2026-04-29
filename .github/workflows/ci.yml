@@ -28,9 +28,9 @@ jobs:
       - run: cargo fmt --check
       - run: cargo test
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: scripts/run-python-client-smoke.sh
-      - run: scripts/run-javascript-client-smoke.sh
-      - run: scripts/run-java-client-smoke.sh
+      - run: cargo test --test python_client_smoke -- --ignored --nocapture
+      - run: cargo test --test javascript_client_smoke -- --ignored --nocapture
+      - run: cargo test --test java_client_smoke -- --ignored --nocapture
       - run: scripts/run-performance-gates.sh
 
   opensearch-parity:

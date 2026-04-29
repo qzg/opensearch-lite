@@ -40,12 +40,15 @@ curl -X POST http://127.0.0.1:9200/orders/_count -H 'content-type: application/j
 
 ```sh
 cargo test
-scripts/run-python-client-smoke.sh
-scripts/run-javascript-client-smoke.sh
-scripts/run-java-client-smoke.sh
+cargo test --test python_client_smoke -- --ignored --nocapture
+cargo test --test javascript_client_smoke -- --ignored --nocapture
+cargo test --test java_client_smoke -- --ignored --nocapture
 scripts/run-performance-gates.sh
 OPENSEARCH_PARITY_DOCKER=1 scripts/run-opensearch-parity-smoke.sh
 ```
+
+The ignored client smoke tests invoke the matching scripts under `scripts/`.
+Those scripts can also be run directly when debugging a single client.
 
 The parity smoke can also target an existing OpenSearch 3.x endpoint with
 `OPENSEARCH_URL=http://127.0.0.1:9200`.

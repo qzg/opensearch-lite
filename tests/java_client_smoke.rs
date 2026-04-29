@@ -1,5 +1,8 @@
+#[path = "support/client_smoke.rs"]
+mod client_smoke_support;
+
 #[test]
 #[ignore = "requires Java client dependencies and an unrestricted localhost server"]
-fn java_client_smoke_placeholder() {
-    assert!(std::path::Path::new("scripts/run-java-client-smoke.sh").exists());
+fn java_client_smoke() {
+    client_smoke_support::run_script("scripts/run-java-client-smoke.sh");
 }
