@@ -1,0 +1,12 @@
+services:
+  opensearch-lite:
+    build:
+      context: ..
+      dockerfile: docker/opensearch-lite.Dockerfile
+    command:
+      - --listen
+      - 0.0.0.0:9200
+      - --allow-nonlocal-listen
+      - --ephemeral
+    ports:
+      - "127.0.0.1:9200:9200"

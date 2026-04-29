@@ -1,0 +1,37 @@
+[package]
+name = "opensearch-lite"
+version = "0.1.0"
+edition = "2021"
+description = "Local-only OpenSearch-compatible development server"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "opensearch_lite"
+path = "src/lib.rs"
+
+[[bin]]
+name = "opensearch-lite"
+path = "src/main.rs"
+
+[[bench]]
+name = "search_scan"
+harness = false
+
+[dependencies]
+axum = "0.8"
+bytes = "1.6"
+http = "1.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.37", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tower = { version = "0.5", features = ["limit"] }
+url = "2.5"
+fs2 = "0.4"
+
+[build-dependencies]
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.10"

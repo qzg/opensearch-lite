@@ -1,925 +1,443 @@
 ---
 date: 2026-04-29
-topic: opensearch-lite-local-dev-server
-status: planning
+topic: opensearch-lite-agentic-local-opensearch
+status: requirements
 ---
 
-# OpenSearch Lite Plan
+# OpenSearch Lite Requirements
 
-## Executive Summary
+## Summary
 
-Build `opensearch-lite` as a local-only, single-node OpenSearch-compatible
-development server for tests, laptops, and lightweight CI. The goal is not to
-reimplement OpenSearch. The goal is:
-
-> Application code that uses normal OpenSearch clients should run against
-> `opensearch-lite` locally and against a real OpenSearch cluster later without
-> code changes, provided the application stays inside the documented supported
-> subset.
-
-The product shape mirrors the useful part of `cqlite-server`: compatibility
-first, low memory by default, readable local persistence, real-client smoke
-tests, and clear unsupported-feature errors. OpenSearch is easier at the wire
-level because the core API is HTTP + JSON/NDJSON, but harder semantically
-because the REST surface, mappings, search DSL, aggregations, and plugins are
-large.
-
-The MVP should start with index management, document CRUD, bulk ingestion, and
-a deliberately small search subset. Full OpenSearch internals, Lucene segment
-compatibility, plugins, security, Dashboards, vector search, and analytics APIs
-are outside the initial identity.
+`opensearch-lite` will be a local-only, Rust-based, recent-OpenSearch-compatible
+development server with a broad REST API shell, real behavior for core local
+workflows, best-effort responses where exact behavior is not practical, and an
+optional read-only runtime agent fallback for unsupported read requests.
 
 ---
 
 ## Problem Frame
 
-Developers who build OpenSearch-backed applications often need a local service
-that is lighter than a real OpenSearch node. Containers work, but they carry JVM
-startup time, heap sizing, plugin/security defaults, disk footprint, and CI
-orchestration overhead.
+OpenSearch is a useful local dependency for modern application development, but
+the JVM-based server is often too heavy for laptops, test suites, lightweight CI,
+and agent-driven development bundles. The cost is not only memory. Developers
+also pay for startup time, container orchestration, plugin/security bootstrap
+behavior, disk footprint, and version-specific operational quirks that are
+irrelevant when the data volume is small and local.
 
-The desired outcome is a small local process that real OpenSearch clients can
-talk to normally for common application workflows: create indexes, index
-documents, bulk load fixtures, run common search queries, update/delete
-documents, and reset state between tests.
+The target development environment is expected to use OpenSearch as one of the
+standard projection and search engines. The related local Cassandra work proves
+the value of a small compatibility server backed by readable local files. For
+OpenSearch, the API surface is much larger, so a narrow "certified subset" would
+leave many clients and tools stranded even when the requested operation could be
+answered well enough for development.
 
-The hard part is not HTTP serving. The hard part is deciding which subset is
-safe to emulate without teaching applications behavior that will diverge from a
-real OpenSearch cluster.
-
----
-
-## Product Thesis
-
-`opensearch-lite` should feel boring to application code:
-
-- Connect to `http://127.0.0.1:9200`.
-- Use official OpenSearch clients with normal request methods.
-- Create local indexes and mappings.
-- Index and bulk-index JSON documents.
-- Run common search DSL queries.
-- Restart and preserve local data by default.
-- Switch the endpoint to a real OpenSearch cluster later without application
-  code changes for the supported subset.
-
-It should not pretend to be a distributed search engine. Unsupported OpenSearch
-features should fail clearly with OpenSearch-shaped JSON errors rather than
-silently approximating complex behavior.
+The product therefore needs to bias toward broad recent OpenSearch API
+compatibility. Exact distributed search semantics, throughput, and Lucene
+internals are less important than making normal clients and agent-written
+applications keep moving locally, while preserving a clear path to full
+OpenSearch in production or in a heavier local stack.
 
 ---
 
-## Reviewed Evidence
+## Reviewed Context
 
-This plan is based on the current `cqlite-server` architecture and current
-OpenSearch documentation reviewed on 2026-04-29.
-
-**Local `cqlite-server` findings**
-
-- `cqlite-server` proves a useful local-dev compatibility pattern: implement
-  the client-facing protocol surface first, back it with server-owned local
-  storage, and validate with real clients rather than synthetic-only tests.
-- The current server uses a compact Rust binary, local-only defaults, explicit
-  resource limits, an ephemeral mode, readable storage files, and parity smokes
-  against real Cassandra.
-- The OpenSearch version should preserve that philosophy while replacing
-  Cassandra native protocol/CQL work with HTTP routing, JSON/NDJSON parsing,
-  OpenSearch response shapes, and Query DSL evaluation.
-
-**OpenSearch findings**
-
-- OpenSearch's API reference describes the REST API as the main interface for
-  most operations. Experimental gRPC APIs exist in the 3.x series, but REST is
-  the right MVP target.
-- The OpenSearch release page lists `3.6.0` as released on 2026-04-07. Use the
-  latest 3.x REST shape as the planning target, while keeping the advertised
-  local response version configurable.
-- Official clients exist for JavaScript, Python, Ruby, Java, PHP, .NET, Go,
-  Hadoop, and Rust. Initial compatibility should target Python, JavaScript, and
-  Java because they cover common application stacks and exercise different
-  client assumptions.
-- The official API specification repository tracks OpenSearch REST route
-  coverage and is a useful reference for route discovery, but the MVP should not
-  try to generate the whole API surface.
-- The Bulk API uses newline-delimited JSON and processes operations
-  independently. Bulk helper compatibility is a first-class MVP requirement.
-- Query DSL support is the largest scope risk. `match_all`, `ids`, `term`,
-  `terms`, `range`, `exists`, and simple `bool` queries are a reasonable first
-  subset. More advanced text analysis, scoring, aggregations, script queries,
-  vector queries, and plugin query types should be staged later.
+- The prior draft correctly established the local-only identity, readable
+  JSON/JSONL storage preference, real-client compatibility testing, and clear
+  unsupported-feature errors.
+- The prior draft was too narrow in treating the MVP as a small API subset. The
+  revised goal is broad route coverage for recent OpenSearch APIs, with behavior
+  classified by compatibility tier.
+- The local Axon architecture is an important downstream validation target, but
+  it should not define the product boundary. `opensearch-lite` should support
+  much more than Axon currently exercises.
+- The current OpenSearch release page lists OpenSearch 3.6.0 as released on
+  2026-04-07. Recent 3.x behavior should be the primary compatibility anchor,
+  with the advertised local version configurable.
+- Axon currently uses OpenSearch 3.6 as a projection engine and relies on
+  OpenSearch index templates, exact-match keyword fields, document PUTs, and
+  query-router search requests. That is evidence that templates and recent
+  search behavior matter early, even though Axon is not the full scope.
 
 ---
 
 ## Actors
 
-- A1. Application developer: runs the local server in a dev stack or test suite.
-- A2. OpenSearch client library: Python, JavaScript, Java, Go, Rust, or direct
-  HTTP callers.
-- A3. CI runner: needs a small predictable service that starts quickly and uses
-  low memory.
-- A4. Maintainer: needs a bounded compatibility matrix and tests that prevent
-  accidental semantic drift.
+- A1. Application developer: runs the local server in a dev stack, test suite,
+  or coding-agent workspace.
+- A2. OpenSearch client or tool: official clients, direct HTTP callers,
+  generated code, migration tools, and local scripts that expect OpenSearch-like
+  responses.
+- A3. Agent caller: a coding agent, query agent, or generated application agent
+  that sends OpenSearch requests and benefits from structured recovery hints.
+- A4. Runtime fallback agent: an optional configured OpenAI-compatible agent
+  endpoint that can synthesize read-only responses from local context.
+- A5. Maintainer: owns the compatibility matrix, route tiers, tests, and
+  guardrails that keep broad support from becoming misleading.
+- A6. Development-bundle integrator: packages `opensearch-lite` with local
+  Cassandra-like services and needs an easy migration path to real OpenSearch.
 
 ---
 
 ## Key Flows
 
-- F1. Local application startup
-  - **Trigger:** A developer starts an application configured for OpenSearch.
-  - **Actors:** A1, A2
-  - **Steps:** Start `opensearch-lite`, connect a client to
-    `http://127.0.0.1:9200`, run root/health/product checks, create or verify
-    indexes, and continue normal application startup.
-  - **Outcome:** Application code runs without a real OpenSearch node.
-  - **Covered by:** R1, R2, R3, R4, R23, R24
-
-- F2. Fixture ingestion and document use
-  - **Trigger:** A dev/test workflow loads search fixtures.
+- F1. Implemented OpenSearch request
+  - **Trigger:** A client sends a request covered by a real handler.
   - **Actors:** A1, A2, A3
-  - **Steps:** Create an index, apply mapping/settings, bulk-index documents,
-    refresh, search, update, delete, and reset state.
-  - **Outcome:** Common test data workflows work through official clients.
-  - **Covered by:** R5, R6, R7, R8, R9, R10, R17
+  - **Steps:** The server parses the HTTP request, routes it to an implemented
+    handler, reads or mutates local state, and returns an OpenSearch-shaped
+    response.
+  - **Outcome:** The local workflow behaves enough like recent OpenSearch that
+    the application can later point at a real OpenSearch cluster without code
+    changes inside the supported behavior.
+  - **Covered by:** R1, R2, R3, R7, R13, R15, R16, R17, R18, R28, R30
 
-- F3. Search query execution
-  - **Trigger:** Application code issues a supported search request.
-  - **Actors:** A1, A2
-  - **Steps:** Send `_search` with supported Query DSL, sort/paginate/filter
-    source, and read OpenSearch-shaped hits.
-  - **Outcome:** The app receives expected local results for supported query
-    patterns.
-  - **Covered by:** R11, R12, R13, R14, R15, R16
+- F2. Best-effort compatibility response
+  - **Trigger:** A client sends a recognized API request whose exact
+    OpenSearch semantics are not implemented but can be approximated safely.
+  - **Actors:** A2, A3, A5
+  - **Steps:** The route shell recognizes the request, returns a compatible
+    response shape or harmless metadata/no-op result, and logs that the response
+    was approximate.
+  - **Outcome:** Broad client and tool workflows continue locally without
+    contaminating normal response bodies with local-only warnings.
+  - **Covered by:** R4, R5, R6, R8, R9, R10, R11, R31
 
-- F4. Compatibility failure diagnosis
-  - **Trigger:** A client sends an unsupported API, query type, mapping option,
-    plugin endpoint, auth/TLS expectation, or cluster operation.
-  - **Actors:** A1, A2, A4
-  - **Steps:** The server returns a JSON error with OpenSearch-like structure,
-    a specific unsupported-feature message, and a status code close to
-    OpenSearch behavior.
-  - **Outcome:** Developers can decide whether to avoid the feature locally or
-    use a real OpenSearch container.
-  - **Covered by:** R18, R19, R20, R21, R22, R25
+- F3. Read-only runtime agent fallback
+  - **Trigger:** A recognized or partially supported read request cannot be
+    satisfied by a deterministic handler, and an OpenAI-compatible agent
+    endpoint is configured.
+  - **Actors:** A2, A3, A4
+  - **Steps:** The server assembles trusted read context, sends it to the
+    configured agent endpoint, validates that the response is read-only and
+    OpenSearch-shaped, then returns it to the caller or returns a structured
+    failure.
+  - **Outcome:** Local development can keep moving on read APIs that have not
+    yet been implemented, especially when the caller is itself an agent that can
+    adjust its query from the returned hint.
+  - **Covered by:** R20, R21, R22, R23, R24, R25, R26, R27
+
+- F4. Unsupported or unsafe request
+  - **Trigger:** A client sends a production-only, unsafe, impossible, or
+    unimplemented mutating request.
+  - **Actors:** A2, A3, A5
+  - **Steps:** The server rejects the request with an OpenSearch-shaped error
+    that identifies the limitation and, when possible, suggests a compatible
+    local alternative.
+  - **Outcome:** Callers get a clear failure rather than silent state changes or
+    misleading emulation.
+  - **Covered by:** R11, R12, R22, R23, R25, R26
+
+- F5. Migration to real OpenSearch
+  - **Trigger:** A project outgrows `opensearch-lite` or moves to production.
+  - **Actors:** A1, A2, A6
+  - **Steps:** The developer changes endpoint configuration to a real recent
+    OpenSearch cluster and uses the compatibility matrix to identify any local
+    approximations that must be replaced with real OpenSearch features.
+  - **Outcome:** Application code using the documented supported behavior moves
+    without source changes, while known local divergences are visible.
+  - **Covered by:** R2, R8, R32, R34, R36
+
+```mermaid
+flowchart TD
+  A["OpenSearch HTTP request"] --> B{"Implemented handler?"}
+  B -->|Yes| C["Execute local handler"]
+  B -->|No| D{"Safe best-effort response?"}
+  D -->|Yes| E["Return compatible shape and log approximation"]
+  D -->|No| F{"Read-only and agent fallback configured?"}
+  F -->|Yes| G["Ask configured agent with trusted read context"]
+  G --> H{"Confident compatible response?"}
+  H -->|Yes| I["Return OpenSearch-shaped response"]
+  H -->|No| J["Return structured actionable error"]
+  F -->|No| J
+  B -->|Unsafe or missing write| J
+```
 
 ---
 
 ## Requirements
 
-**HTTP and REST Compatibility**
+**Compatibility Posture**
 
-- R1. The server must listen on a configurable HTTP address, defaulting to
-  `127.0.0.1:9200`.
-- R2. The first supported protocol must be HTTP/1.1 JSON/NDJSON REST. gRPC is
-  explicitly deferred.
-- R3. `GET /` and `HEAD /` must return product/version-shaped responses that
-  official clients accept for local non-security deployments.
-- R4. The server must implement basic cluster and node discovery endpoints that
-  common clients call at startup: `/_cluster/health`, selected `/_cat/*`
-  endpoints, and lightweight stats/info responses when a target client requires
-  them.
-- R5. Request parsing must handle JSON request bodies, NDJSON bulk bodies,
-  query-string parameters, common content types, and bounded request sizes.
-- R6. Request gzip support should be added before broad client compatibility
-  because some clients expose or enable compressed request bodies. If omitted
-  in the first smoke, docs must tell users to disable client compression.
+- R1. The server must be a local-only, single-node OpenSearch-compatible
+  development server, not a production search engine replacement.
+- R2. Recent OpenSearch 3.x behavior must be the compatibility anchor. Older
+  1.x and 2.x quirks should not drive design unless recent official clients
+  require a compatibility response.
+- R3. The first wire protocol must be HTTP/1.1 JSON/NDJSON REST, defaulting to
+  `127.0.0.1:9200`. Non-REST transports are deferred.
+- R4. The server must build a broad route inventory from recent OpenSearch REST
+  APIs and classify every known route into a compatibility tier.
+- R5. The default posture must be best-effort emulation for safe APIs rather
+  than a small high-fidelity subset.
+- R6. Approximate behavior must be disclosed through server logs and
+  documentation, not by adding local-only warning fields to ordinary successful
+  client responses.
+- R7. Official OpenSearch clients and direct HTTP callers must be able to use
+  normal OpenSearch request methods without custom local transport code for the
+  supported behavior.
 
-**Index and Mapping Surface**
+**API Surface and Behavior Tiers**
 
-- R7. The MVP must support index lifecycle APIs used by normal applications:
-  create index, delete index, get index, index exists, get mapping, put mapping,
-  get settings, and put settings for a documented subset.
-- R8. Mappings must preserve field names, declared field types, analyzers where
-  accepted, and dynamic mapping behavior enough to drive supported query
-  evaluation and metadata responses.
-- R9. Unsupported mapping/settings options must be preserved when harmless for
-  metadata round trips or rejected clearly when they imply semantics the local
-  server cannot honor.
-- R10. The server should support aliases only after direct index APIs are stable.
-  Alias support is important for real applications but should not complicate
-  the first document-store slice.
+- R8. The compatibility matrix must distinguish at least these tiers:
+  implemented, best-effort, agent-fallback-eligible, unsupported, and outside
+  product identity.
+- R9. The broad API shell should recognize recent OpenSearch route families
+  across cluster, nodes, cat, indices, aliases, templates, document, bulk,
+  search, tasks, ingest, snapshots, scripts, and other core REST surfaces even
+  when many start as best-effort or unsupported.
+- R10. Harmless metadata, status, discovery, and local no-op operations may
+  return best-effort OpenSearch-shaped responses when exact distributed
+  semantics do not matter for local development.
+- R11. APIs that are unsafe, security-sensitive, production-only, externally
+  destructive, or semantically impossible to emulate responsibly must fail
+  clearly instead of returning fake success.
+- R12. Mutating APIs must be handled by deterministic server code before they
+  can change local state. The runtime agent fallback must never be the hidden
+  implementation of a write.
 
-**Document and Bulk APIs**
+**Core Local Behavior**
 
-- R11. The MVP must support document index/create/get/update/delete APIs for
-  `/{index}/_doc/{id}`, `/{index}/_create/{id}`, generated IDs, `_source`
-  retrieval, and basic version metadata.
-- R12. The MVP must support `/_bulk` and `/{index}/_bulk` with `index`,
-  `create`, `update`, and `delete` actions, per-item error responses, and
-  NDJSON validation.
-- R13. Writes must be read-your-own-write visible in the same server instance.
-- R14. `refresh=true` and `refresh=wait_for` must be accepted. The local MVP may
-  treat refresh as immediate visibility, but this divergence must be documented.
-- R15. Document updates must support the common partial `doc` update shape.
-  Scripted updates and ingest pipelines are deferred.
+- R13. Core index APIs must support creating, deleting, checking, retrieving,
+  mapping, and settings behavior needed by normal development workflows.
+- R14. Index templates and aliases must be treated as early compatibility
+  requirements, not distant nice-to-haves, because modern clients and dev
+  stacks commonly rely on them before writing documents.
+- R15. Core document APIs must support indexing, creating, retrieving, updating,
+  deleting, generated IDs, `_source` retrieval, and basic version metadata.
+- R16. Bulk ingestion must support NDJSON parsing, common `index`, `create`,
+  `update`, and `delete` actions, per-item responses, and continued processing
+  after item-level failures.
+- R17. Writes must be read-your-own-write visible inside the local server.
+  `refresh` parameters may map to immediate local visibility when documented.
+- R18. Search must support common recent Query DSL behavior for local
+  development: match-all, IDs, exact terms, ranges, existence, simple booleans,
+  limited text matching, source filtering, sorting, pagination limits, and
+  total-hit reporting.
+- R19. Semantic, vector, and hybrid search must be part of the compatibility
+  ambition for recent OpenSearch, even if exact vector indexing and retrieval
+  behavior is staged after the broad API shell and core search path.
 
-**Search Compatibility**
+**Runtime Agent Fallback**
 
-- R16. The MVP search API must support `GET/POST /_search` and
-  `GET/POST /{index}/_search`.
-- R17. The first Query DSL subset must include `match_all`, `ids`, `term`,
-  `terms`, `range`, `exists`, simple `bool` (`must`, `filter`, `should`,
-  `must_not`, `minimum_should_match`), and limited `match` behavior for text
-  fields.
-- R18. Search responses must include OpenSearch-shaped `took`, `timed_out`,
-  `_shards`, `hits.total`, `hits.max_score`, and `hits.hits` fields, including
-  `_index`, `_id`, `_score`, and `_source`.
-- R19. The MVP must support `from`, `size`, source filtering, simple field sort,
-  and basic `track_total_hits` behavior for bounded local result sets.
-- R20. Unsupported search features such as aggregations, highlighting, script
-  fields, nested queries, percolator, suggesters, scroll, PIT, vector search,
-  and plugin queries must return explicit unsupported errors until implemented.
+- R20. Runtime agent fallback must be disabled unless the user configures an
+  OpenAI-compatible endpoint and any required authentication.
+- R21. The configured endpoint may be local or cloud-hosted. Once configured, it
+  is treated as trusted for the purpose of receiving relevant local read
+  context.
+- R22. Agent fallback must be read-only. It may synthesize responses from local
+  state, but it must not mutate catalog entries, mappings, settings, templates,
+  aliases, documents, files, emulator code, external services, or durable
+  storage.
+- R23. Agent fallback must only be eligible for read-style APIs and queries
+  whose answer can be derived from available local context.
+- R24. The fallback context may include the incoming request, route tier,
+  OpenSearch API metadata, compatibility documentation, catalog state, mappings,
+  settings, templates, aliases, and relevant raw documents.
+- R25. If the fallback agent cannot confidently satisfy a request, the server
+  must return a structured OpenSearch-shaped error that explains the limitation
+  and gives an actionable hint for adjusting the request.
+- R26. Agent-produced success responses must be validated for parseability,
+  response shape, read-only behavior, configured size limits, and timeout
+  limits before they are returned to the caller.
+- R27. Server logs must identify agent fallback invocations, whether the
+  response was successful or failed, and enough context to debug the behavior
+  without hiding that a trusted external endpoint may have received local data.
 
-**Storage and Memory**
+**Storage, Memory, and Local Safety**
 
-- R21. Data must persist under `--data-dir` by default. An explicit
-  `--ephemeral` mode may skip durable files for tests.
-- R22. Storage must be readable by humans and coding agents. The first layout
-  should use JSON metadata and JSONL document/mutation files, not OpenSearch
+- R28. Durable mode must persist state under a configurable data directory by
+  default, with an explicit ephemeral mode for disposable tests.
+- R29. Storage must be readable by humans and coding agents, using JSON metadata
+  and JSONL-style mutation/document records instead of OpenSearch or Lucene
   segment compatibility.
-- R23. The server must append durable mutation records before acknowledging
-  writes in durable mode.
-- R24. Restart recovery must rebuild index catalog, mappings/settings, document
-  state, tombstones, and versions from local files.
-- R25. The server must bound request body size, bulk action count, result page
-  size, index count, document count, in-memory bytes, and concurrent
-  connections.
+- R30. Durable writes must be recorded before acknowledgment, and restart
+  recovery must rebuild local catalog, mappings, settings, templates, aliases,
+  documents, tombstones, and versions from local files.
+- R31. The server must bound request body size, bulk action count, result size,
+  document count, index count, in-memory bytes, agent context size, agent
+  response size, and concurrent connections.
+- R32. Defaults must remain local and conservative: loopback binding, no auth,
+  no TLS, no plugins, limited memory, limited result sizes, and explicit
+  configuration before exposing data to an agent endpoint.
 
-**Compatibility and Operations**
+**Verification and Documentation**
 
-- R26. Defaults must be conservative: localhost binding, no auth, no TLS, no
-  plugins, low memory, limited bulk size, limited result size, and clear logs.
-- R27. The server must provide OpenSearch-shaped JSON error bodies with stable
-  status codes for unsupported APIs, invalid request bodies, unknown indexes,
-  version conflicts, and request-size violations.
-- R28. Compatibility must be verified with real clients, starting with Python
-  `opensearch-py`, JavaScript `@opensearch-project/opensearch`, and the
-  OpenSearch Java client.
-- R29. The same smoke flow must run against `opensearch-lite` and a real
-  OpenSearch container, and accepted divergences must be documented.
-- R30. Documentation must include a compatibility matrix, supported API subset,
-  unsupported features, client configuration examples, and migration guidance
-  to real OpenSearch.
+- R33. Compatibility must be tested with real clients, starting with Python,
+  JavaScript, and Java clients, plus direct HTTP smoke tests.
+- R34. A shared smoke suite must run against both `opensearch-lite` and a real
+  recent OpenSearch 3.x container, with documented accepted divergences.
+- R35. Route inventory tests must prevent known recent OpenSearch routes from
+  disappearing from the compatibility matrix.
+- R36. Documentation must include supported API tiers, local approximation
+  behavior, agent fallback configuration, data-exposure implications,
+  actionable-error examples, client configuration examples, and migration
+  guidance to real OpenSearch.
 
 ---
 
 ## Acceptance Examples
 
-- AE1. **Covers R1, R2, R3, R4.** Given
-  `opensearch-lite --listen 127.0.0.1:9200 --data-dir ./data`, when a Python
-  `opensearch-py` client connects and calls `info()` plus
-  `cluster.health()`, both calls succeed without custom transport code.
+- AE1. **Covers R1, R2, R3, R7.** Given the server is running on the default
+  loopback address, when an official recent OpenSearch client performs its
+  startup info and health checks, those calls succeed without custom client
+  transport code.
+- AE2. **Covers R4, R8, R9, R35.** Given a route exists in the recent
+  OpenSearch REST inventory, when the compatibility matrix is generated, that
+  route appears with an explicit behavior tier rather than being unknown.
+- AE3. **Covers R5, R6, R10.** Given a recognized harmless metadata API is not
+  fully implemented, when a client calls it, the server returns an
+  OpenSearch-shaped best-effort response and logs the approximation.
+- AE4. **Covers R13, R14, R15, R17.** Given an index template is registered and
+  a document write creates or updates a local index, when the client reads the
+  document or searches immediately after the write, local state is visible.
+- AE5. **Covers R16.** Given a mixed bulk request contains valid and invalid
+  item actions, when the request is processed, valid items are applied and
+  invalid items are reported with per-item OpenSearch-shaped errors.
+- AE6. **Covers R18.** Given several local documents with keyword, numeric,
+  date-like, and text fields, when a client runs supported boolean, term, range,
+  sort, and pagination searches, the response has OpenSearch-shaped hits and
+  bounded result size.
+- AE7. **Covers R20, R21, R23, R24.** Given agent fallback is configured and a
+  read-style API lacks a deterministic handler, when the server has enough
+  local context to answer, it may return an agent-produced OpenSearch-shaped
+  response after validation.
+- AE8. **Covers R12, R22.** Given a missing write API would change mappings,
+  aliases, documents, or files, when the request is not implemented in server
+  code, the runtime agent fallback is not invoked to perform the write.
+- AE9. **Covers R25.** Given the fallback agent cannot confidently answer a
+  read request, when the server returns the failure, the response includes a
+  structured reason and a hint that an agent caller can use to retry with a
+  supported query shape.
+- AE10. **Covers R28, R29, R30.** Given a durable local document was written and
+  the server restarts with the same data directory, when a supported get or
+  search request runs, the document is recovered from readable local files.
 
-- AE2. **Covers R7, R8, R11, R13.** Given an index `books` with a simple mapping,
-  when a client indexes document `1` and then gets it by ID, the response
-  includes `_source`, `_id`, `_index`, `found: true`, and expected version
-  metadata.
+---
 
-- AE3. **Covers R12.** Given a bulk request containing successful `index`,
-  `update`, and `delete` actions plus one invalid action, the response reports
-  per-item statuses and continues processing after the invalid item.
+## Success Criteria
 
-- AE4. **Covers R16, R17, R18, R19.** Given several documents in `books`, when a
-  client searches with a `bool` query containing `term` and `range` filters,
-  the response includes only matching hits, honors `from`/`size`, and returns an
-  OpenSearch-shaped `hits.total`.
-
-- AE5. **Covers R20, R27.** Given a client sends an aggregation or vector query
-  before those are supported, the server rejects the request with a JSON error
-  that names the unsupported feature instead of returning an approximate result.
-
-- AE6. **Covers R21, R23, R24.** Given a document was indexed in durable mode
-  and the server stops cleanly, when it restarts with the same `--data-dir`, a
-  supported `_search` and `_doc/{id}` request both return the document.
+- Developers can run broad OpenSearch-dependent local workflows without
+  starting a JVM OpenSearch node for common development and test use.
+- Recent OpenSearch clients see normal response shapes for the supported and
+  best-effort behavior, while unsupported behavior fails clearly.
+- The compatibility matrix makes breadth honest: users can tell which APIs are
+  implemented, approximate, agent-fallback-eligible, unsupported, or outside
+  the product identity.
+- A configured read-only runtime agent fallback can successfully answer useful
+  unsupported read requests from local context and return actionable failures
+  when it cannot.
+- Local data remains agent-readable on disk, and the server remains bounded for
+  development-scale data sets, typically below 2 GB and with an intended ceiling
+  around 10 GB.
+- A project can move from `opensearch-lite` to real recent OpenSearch by
+  changing endpoint configuration, provided it stays within the documented
+  behavior or resolves listed divergences.
 
 ---
 
 ## Scope Boundaries
 
-### First MVP
+### Deferred for later
 
-- HTTP/JSON REST only, no gRPC.
-- Single-node local behavior only.
-- Direct index APIs before aliases.
-- JSON documents and schema-lite mappings.
-- Document CRUD, bulk, and small Query DSL subset.
-- Readable local JSON/JSONL storage.
-- Official-client compatibility tests for Python, JavaScript, and Java.
+- Exact parity for Lucene scoring, analyzers, tokenizers, and ranking internals.
+- Full semantic, vector, and hybrid search implementation, beyond route
+  recognition and staged best-effort support.
+- Full plugin API implementations.
+- Complete Dashboards, observability, security analytics, SQL, PPL, ML, and
+  other optional ecosystem surfaces.
+- Request/response compression if no target client requires it during early
+  compatibility testing.
+- TLS, authentication, roles, tenancy, and AWS SigV4 compatibility unless a
+  target local workflow requires them.
+- Runtime self-improvement that patches emulator code after an unsupported
+  request.
+- Agent fallback policy systems for field-level redaction or endpoint-specific
+  data controls.
 
-### Deferred For Later
+### Outside this product's identity
 
-- Aliases and index templates.
-- Multi-search, multi-get, delete-by-query, update-by-query, reindex.
-- Scroll, point-in-time, search-after, and deep pagination.
-- Aggregations.
-- Highlighting and suggesters.
-- Full analyzer/tokenizer parity.
-- Nested, parent/child, join, percolator, and geo queries.
-- SQL, PPL, Dashboards, alerting, observability, ML, security analytics, and
-  other plugin APIs.
-- Vector search and hybrid search.
-- TLS, authentication, roles, tenancy, and AWS SigV4 compatibility.
-- OpenSearch Serverless-specific behavior.
-
-### Outside This Product's Identity
-
-- Production search engine replacement.
-- Lucene/OpenSearch segment compatibility.
-- Distributed cluster behavior, shard allocation, replicas, recovery, and node
-  coordination.
-- Matching OpenSearch performance, scoring, or analyzer internals exactly.
-- Running OpenSearch plugins.
+- Production OpenSearch replacement.
+- Distributed cluster behavior, shard allocation fidelity, replicas, recovery,
+  quorum behavior, and node coordination.
+- OpenSearch or Lucene segment-file compatibility.
+- Running real OpenSearch plugins.
 - Forking OpenSearch to make it smaller.
+- Runtime agent fallback performing writes, mutating local files, modifying
+  emulator code, or silently changing local state.
+- Optimizing for old OpenSearch 1.x or 2.x behavior as a primary goal.
 
 ---
 
-## Architecture Recommendation
+## Key Decisions
 
-Use a layered Rust architecture:
-
-```text
-Official OpenSearch clients / HTTP callers
-        |
-        v
-HTTP listener and request router
-        |
-        v
-Request normalization and OpenSearch response/error shaping
-        |
-        +--------------------+--------------------+
-        |                    |                    |
-        v                    v                    v
-Cluster/index APIs      Document APIs        Search APIs
-        |                    |                    |
-        v                    v                    v
-Catalog/mapping store   Document store       Query DSL evaluator
-        |                    |                    |
-        +--------------------+--------------------+
-                             |
-                             v
-              JSONL mutation log + compacted snapshots
-```
-
-### Component Responsibilities
-
-**HTTP listener and router**
-
-- Accept HTTP/1.1 requests on a configurable local address.
-- Route method/path combinations to typed handlers.
-- Enforce body size and connection limits before expensive parsing.
-- Preserve OpenSearch-ish method/path behavior, including `HEAD` status-only
-  responses.
-
-**Request normalization**
-
-- Parse JSON and NDJSON bodies.
-- Normalize query-string parameters such as `refresh`, `routing`, `pretty`,
-  `_source`, `from`, `size`, and `track_total_hits`.
-- Decide which unknown parameters are ignored for compatibility and which are
-  rejected because they imply unsupported semantics.
-
-**Response and error shaping**
-
-- Produce response bodies that official clients accept.
-- Keep status codes and JSON error structure close to OpenSearch.
-- Prefer explicit unsupported-feature errors over partial emulation.
-
-**Catalog and mapping store**
-
-- Persist index names, UUIDs, settings, mappings, aliases once supported, and
-  compatibility metadata.
-- Generate `GET /{index}`, mapping, and settings responses from local state.
-- Preserve unsupported but harmless mapping/settings fields for round-trip
-  metadata where possible.
-
-**Document store**
-
-- Store documents by index and ID.
-- Maintain document version, sequence number, primary term placeholder, source,
-  tombstone state, and update timestamp.
-- Append a mutation before acknowledging writes in durable mode.
-- Compact mutation logs into index-shaped snapshots.
-
-**Query DSL evaluator**
-
-- Evaluate the supported Query DSL subset against bounded local document sets.
-- Start with deterministic filtering and simple scoring.
-- Keep scoring intentionally modest and documented; exact OpenSearch/Lucene
-  scoring parity is not an MVP requirement.
+- Broad recent-3.x compatibility over narrow subset: the product should expose
+  as much of the recent OpenSearch REST surface as practical, even where early
+  behavior is best-effort.
+- Best-effort responses log divergence: successful client response bodies stay
+  OpenSearch-shaped, while local approximation is visible in server logs and
+  documentation.
+- Runtime agent fallback is configured and read-only: an OpenAI-compatible
+  endpoint may synthesize read responses from local context, but writes remain
+  deterministic server responsibilities.
+- Configured agent endpoints are trusted: if users configure cloud fallback,
+  full relevant read context may leave the process, and that trust decision must
+  be explicit in docs and logs.
+- Axon validates direction but does not limit scope: current Axon OpenSearch
+  usage proves templates, search, and local memory pressure matter, but the API
+  target is broader than Axon Stage 1.
+- JSON/JSONL storage remains core product identity: readable local files are a
+  feature for coding agents and developers, not only an implementation shortcut.
 
 ---
 
-## Project Shape
-
-Proposed files under `opensearch-lite/`:
-
-```text
-opensearch-lite/
-  PLAN.md
-  Cargo.toml
-  src/
-    main.rs
-    lib.rs
-    config.rs
-    server.rs
-    http/
-      mod.rs
-      router.rs
-      request.rs
-      response.rs
-      errors.rs
-    api/
-      cluster.rs
-      cat.rs
-      indices.rs
-      documents.rs
-      bulk.rs
-      search.rs
-    catalog/
-      mod.rs
-      mapping.rs
-      settings.rs
-      persist.rs
-    storage/
-      mod.rs
-      mutation_log.rs
-      snapshots.rs
-      document_store.rs
-    query/
-      mod.rs
-      dsl.rs
-      evaluator.rs
-      source_filter.rs
-      sort.rs
-  tests/
-    http_surface.rs
-    index_surface.rs
-    document_surface.rs
-    bulk_surface.rs
-    search_surface.rs
-    python_client_smoke.rs
-    javascript_client_smoke.rs
-    java_client_smoke.rs
-  docker/
-    docker-compose.yml
-    client-smoke/
-  docs/
-    compatibility.md
-    supported-apis.md
-    driver-examples.md
-```
-
-This is a planning target, not a requirement to create all files upfront.
-
----
-
-## Storage Plan
-
-Use an AI-readable local store rather than OpenSearch/Lucene-compatible segment
-files.
-
-Initial durable layout:
-
-```text
-data/
-  cluster.json
-  indices/
-    <index>/
-      manifest.json
-      mapping.json
-      settings.json
-      mutations.jsonl
-      documents.jsonl
-      tombstones.jsonl
-```
-
-Recommended semantics:
-
-- `cluster.json` stores cluster UUID, advertised version, and local node ID.
-- `manifest.json` stores index UUID, creation time, document counters, and file
-  generation metadata.
-- `mapping.json` and `settings.json` preserve accepted request bodies after
-  validation/normalization.
-- `mutations.jsonl` records acknowledged write operations before they affect
-  durable snapshots.
-- `documents.jsonl` stores compacted current documents with `_id`, `_source`,
-  version, sequence number, primary term placeholder, and update timestamp.
-- `tombstones.jsonl` stores deletes only as long as needed for version/conflict
-  semantics.
-- Startup replays snapshots then mutations into an in-memory document map.
-- `--ephemeral` skips local file writes entirely.
-
-Future maturation can split mutations into numbered segments, add manifests for
-safe compaction, and add optional inverted indexes or Tantivy-backed search once
-the brute-force evaluator's limits are reached.
-
----
-
-## Supported API Scope
-
-### First Externally Useful MVP
-
-Cluster/info:
-
-- `GET /`
-- `HEAD /`
-- `GET /_cluster/health`
-- `GET /_cat/health`
-- `GET /_cat/indices`
-
-Index APIs:
-
-- `PUT /{index}`
-- `DELETE /{index}`
-- `GET /{index}`
-- `HEAD /{index}`
-- `GET /{index}/_mapping`
-- `PUT /{index}/_mapping`
-- `GET /{index}/_settings`
-- `PUT /{index}/_settings`
-
-Document APIs:
-
-- `PUT /{index}/_doc/{id}`
-- `POST /{index}/_doc`
-- `PUT /{index}/_create/{id}`
-- `POST /{index}/_create/{id}`
-- `GET /{index}/_doc/{id}`
-- `HEAD /{index}/_doc/{id}`
-- `POST /{index}/_update/{id}`
-- `DELETE /{index}/_doc/{id}`
-- `POST /_bulk`
-- `PUT /_bulk`
-- `POST /{index}/_bulk`
-- `PUT /{index}/_bulk`
-
-Search APIs:
-
-- `GET /_search`
-- `POST /_search`
-- `GET /{index}/_search`
-- `POST /{index}/_search`
-
-Query DSL:
-
-- `match_all`
-- `ids`
-- `term`
-- `terms`
-- `range`
-- `exists`
-- `bool` with `must`, `filter`, `should`, `must_not`, and basic
-  `minimum_should_match`
-- Limited `match` for text fields, likely lowercase token containment at first
-
-Response features:
-
-- `_source` includes/excludes
-- `from`
-- `size`
-- simple field sort
-- `track_total_hits`
-- basic `_score`
-
-### Beta Scope
-
-- Aliases.
-- Multi-get.
-- Multi-search.
-- Delete by query for supported Query DSL.
-- Update by query for supported Query DSL.
-- Index templates.
-- Better text analysis with documented analyzer subset.
-- Docker image and Compose example.
-- Optional request/response gzip.
-
----
-
-## Driver Compatibility Targets
-
-Initial targets, in order:
-
-1. Python `opensearch-py`
-2. JavaScript `@opensearch-project/opensearch`
-3. OpenSearch Java client
-4. Go client, if relevant to target applications
-5. Rust client, if relevant later
-
-Baseline local client configuration:
-
-```text
-host = 127.0.0.1
-port = 9200
-scheme = http
-auth = disabled
-tls = disabled
-compression = disabled until gzip support lands
-```
-
-The first implementation task should capture the exact requests each client
-sends for connect/info/health/index/document/search flows. Those traces become
-the compatibility contract for the MVP.
-
----
-
-## Delivery Milestones
-
-### M0: Project Scaffold and HTTP Fixtures
-
-Deliver:
-
-- Rust crate scaffold.
-- CLI config for `--listen`, `--data-dir`, `--ephemeral`,
-  `--memory-limit`, `--max-body-size`, `--bulk-action-limit`,
-  and `--result-size-limit`.
-- HTTP listener and route dispatch.
-- OpenSearch-shaped root response and error body helpers.
-- Unit tests for route matching, JSON parsing, NDJSON parsing, and error
-  shaping.
-
-Exit criteria:
-
-- `GET /`, `HEAD /`, and an unknown route return expected status/body shapes.
-- Oversized request bodies fail before unbounded allocation.
-- The server defaults to `127.0.0.1:9200`.
-
-### M1: Cluster and Index Catalog
-
-Deliver:
-
-- `/_cluster/health`.
-- `/_cat/health`.
-- `/_cat/indices`.
-- Create/delete/get/head index.
-- Durable catalog with mapping/settings snapshots.
-- Basic OpenSearch index metadata response shape.
-
-Exit criteria:
-
-- A real Python client can connect, call info/health, create an index, check
-  existence, get index metadata, and delete the index.
-
-### M2: Document CRUD and Durable Store
-
-Deliver:
-
-- Document index/create/get/head/update/delete.
-- Generated IDs.
-- Basic version and sequence metadata.
-- JSONL mutation log and startup replay.
-- Compaction to `documents.jsonl`.
-- Ephemeral mode parity for CRUD.
-
-Exit criteria:
-
-- Python and JavaScript clients can create an index, index a document, get it,
-  update it, delete it, and observe not-found responses after deletion.
-- Durable restart returns previously indexed documents.
-
-### M3: Bulk API and Client Parity Harness
-
-Deliver:
-
-- `/_bulk` and `/{index}/_bulk`.
-- Per-item success/error responses.
-- Bulk limits for body size, action count, and generated ID count.
-- Docker/Compose harness that runs the same smoke flow against
-  `opensearch-lite` and a real OpenSearch 3.x container.
-- Java client smoke.
-
-Exit criteria:
-
-- Python, JavaScript, and Java client smokes pass against `opensearch-lite`.
-- The same basic bulk/index/get/search flow passes against a real OpenSearch
-  container, with documented accepted divergences.
-
-### M4: Search MVP
-
-Deliver:
-
-- `_search` endpoints.
-- Query DSL evaluator for the first subset.
-- Source filtering.
-- `from`/`size`.
-- Simple sort.
-- `track_total_hits`.
-- OpenSearch-shaped hits response.
-- Explicit unsupported errors for unimplemented query and aggregation features.
-
-Exit criteria:
-
-- Real clients can run supported searches and receive expected hit sets.
-- Unsupported aggregations/vector/script/nested requests fail clearly.
-- Result size limits prevent unbounded materialization.
-
-### M5: Mapping and Analysis Hardening
-
-Deliver:
-
-- Better field type validation.
-- Dynamic mapping behavior for common scalar fields.
-- Basic keyword/text differences.
-- Simple lowercase text analysis for `match`.
-- Date/numeric range handling that follows mapping type.
-- Mapping round-trip compatibility improvements discovered by real clients.
-
-Exit criteria:
-
-- Search results for common text/keyword/numeric/date fields match the
-  documented local semantics.
-- Mapping errors are clear enough to steer developers toward supported shapes.
-
-### M6: Dev-Stack Beta
-
-Deliver:
-
-- Container image.
-- Compose example.
-- Compatibility matrix.
-- Supported API docs.
-- Client examples for Python, JavaScript, and Java.
-- App-call inventory guide for projects deciding whether `opensearch-lite`
-  fits their workflow.
-
-Exit criteria:
-
-- A sample app can switch between `opensearch-lite` and OpenSearch by changing
-  endpoint configuration only.
-- CI can use `opensearch-lite` for supported local search tests.
-
----
-
-## Testing Plan
-
-### HTTP and API Surface Tests
-
-- Method/path route matching.
-- `HEAD` status-only responses.
-- Query-string parsing.
-- JSON content-type handling.
-- NDJSON bulk parsing with trailing newline and malformed-line cases.
-- Request body limits.
-- Unknown route errors.
-- OpenSearch-shaped error bodies.
-
-### Catalog Tests
-
-- Create index with and without mapping/settings.
-- Duplicate create returns resource-already-exists-style error.
-- Delete index removes metadata and documents.
-- Get/head index status behavior.
-- Mapping/settings round-trip for accepted fields.
-- Unsupported settings either preserve or reject according to compatibility
-  rules.
-
-### Document Tests
-
-- Index with explicit ID.
-- Create with explicit ID rejects existing document.
-- Auto-generated ID indexes successfully.
-- Get/head existing and missing documents.
-- Partial update merges fields.
-- Delete tombstones document.
-- Version/sequence metadata increments predictably.
-- Durable restart preserves writes and deletes.
-
-### Bulk Tests
-
-- Mixed `index`, `create`, `update`, and `delete` actions.
-- Per-item failure does not stop subsequent valid actions.
-- Missing `_index` fails unless path index is provided.
-- Malformed NDJSON returns a structured error.
-- Bulk action limits fail predictably.
-
-### Search Tests
-
-- `match_all` returns all live docs.
-- `ids` returns selected docs.
-- `term` and `terms` match keyword/numeric fields.
-- `range` handles numeric and date-like fields.
-- `exists` handles present and missing fields.
-- `bool` combines `must`, `filter`, `should`, and `must_not`.
-- `from`/`size` bounds results.
-- Source filtering includes/excludes expected fields.
-- Sort orders by a simple scalar field.
-- Unsupported query types and aggregations return explicit errors.
-
-### Client Compatibility Tests
-
-Run the same high-level flow through real clients:
-
-```text
-info
-cluster health
-create index with mapping
-index document
-bulk index/update/delete
-get document
-search supported query
-delete document
-delete index
-```
-
-Run every smoke against:
-
-1. `opensearch-lite`
-2. A real OpenSearch 3.x container
-
-Document any accepted divergence in `docs/compatibility.md`.
-
----
-
-## Key Trade-Offs
-
-- Prefer real-client compatibility over broad API coverage.
-- Prefer clear unsupported errors over approximate behavior.
-- Prefer readable local JSON/JSONL storage over OpenSearch segment
-  compatibility.
-- Prefer deterministic local semantics over distributed-cluster simulation.
-- Prefer brute-force bounded search first, then add an index only when tests
-  prove brute force is insufficient.
-- Prefer a small documented Query DSL subset over partial support for many query
-  types.
-- Prefer localhost/no-auth/no-TLS defaults for local dev, with security features
-  deferred.
-
----
-
-## Risk Register
-
-| Risk | Severity | Evidence | Mitigation |
-|---|---:|---|---|
-| Query DSL scope expands without bound | High | OpenSearch has many query types and plugins | Start from an app-call inventory and document unsupported query errors |
-| Client startup checks require hidden endpoints | Medium | Official clients may call info, health, product/version, or compatibility headers | Capture exact client request traces in M1 and add only required endpoints |
-| Bulk helpers rely on nuanced response details | High | Bulk APIs return per-item statuses and continue after item failures | Implement bulk before advanced search; parity-smoke against real OpenSearch |
-| Mapping/analyzer behavior diverges from real OpenSearch | High | Text analysis and field types affect search results | Document local semantics; defer advanced analyzers; add parity cases for common fields |
-| Memory grows during search result materialization | High | Brute-force search can collect too many docs | Enforce result limits, max docs, max body, and source-size budgets |
-| Developers mistake local semantics for production search | Medium | A lightweight emulator can hide performance/scoring differences | Strong compatibility matrix and unsupported-feature errors |
-| Security/TLS assumptions block client connection | Medium | Default OpenSearch examples often use HTTPS with demo auth | Document local HTTP/no-auth config and add TLS/auth only if target apps require it |
-| Current OpenSearch version shifts | Low | OpenSearch releases continue through 2026 | Pin tested container versions in smokes and keep advertised version configurable |
+## Dependencies / Assumptions
+
+- Recent OpenSearch 3.x API metadata and behavior remain the primary reference
+  for compatibility tiering.
+- The runtime agent endpoint follows an OpenAI-compatible API shape and can be
+  configured with endpoint, model, and optional authentication.
+- Users who configure a cloud-hosted fallback endpoint accept that relevant raw
+  local read context may be sent to that endpoint.
+- Development-scale data is expected to be small enough for bounded in-memory
+  scans and local indexes to be practical, usually below 2 GB and likely below
+  10 GB.
+- Exact production behavior is less important than local compatibility,
+  response-shape fidelity, route breadth, clear logs, and migration guidance.
 
 ---
 
 ## Outstanding Questions
 
-### Resolve Before Implementation
+### Resolve Before Planning
 
-- Which target application or stack should define the first API inventory?
-- Which official clients are mandatory for the first beta: Python, JavaScript,
-  Java, or another language?
-- Does the target app require aliases or index templates before search MVP?
-- Does the target app enable request compression by default?
-- Should the advertised root version be latest OpenSearch 3.x, OpenSearch
-  2.x-compatible, or configurable per test suite?
+- None.
 
-### Deferred To Implementation Planning
+### Deferred to Planning
 
-- Exact Rust HTTP stack choice after scaffold evaluation.
-- Exact JSONL compaction thresholds.
-- Whether to introduce Tantivy or another indexing library after brute-force
-  search reaches limits.
-- Exact error type names for each unsupported feature after comparing real
-  OpenSearch responses.
-- Whether to preserve unknown mapping/settings fields by default or require an
-  allowlist per setting group.
-
----
-
-## Recommended Next Step
-
-Start with an API inventory before coding:
-
-1. Run the target application or representative smoke flow against a real
-   OpenSearch 3.x container.
-2. Capture method, path, query parameters, content type, and request body shape
-   for each OpenSearch call.
-3. Classify calls into MVP, beta, deferred, or unsupported.
-4. Convert the MVP call list into route fixtures and client smoke tests.
-5. Scaffold M0 only after that inventory confirms the first compatibility
-   target.
-
-This keeps `opensearch-lite` bounded by actual application needs instead of
-drifting toward a partial clone of the full OpenSearch REST API.
+- [Needs research] Determine the exact recent OpenSearch API inventory source
+  and generation process for route tiering.
+- [Needs research] Decide the default advertised OpenSearch version and how
+  configurable version reporting should work.
+- [Technical] Define the precise request/response contract for the configured
+  OpenAI-compatible runtime fallback.
+- [Technical] Define validation rules for agent-produced responses, including
+  confidence, size, timeout, parseability, and read-only guarantees.
+- [Technical] Decide the first route families that receive deterministic
+  implementations versus best-effort shells.
+- [Technical] Decide how semantic/vector/hybrid search should be staged after
+  the broad compatibility shell.
+- [Technical] Define local resource limits for request bodies, documents,
+  indexes, result windows, and agent context.
 
 ---
 
 ## Sources and References
 
-- `cqlite-server` plan and current implementation: sibling project
-  `cqlite-server/`
 - OpenSearch release schedule and version history:
   <https://opensearch.org/releases/>
 - OpenSearch API reference:
   <https://docs.opensearch.org/latest/api-reference/>
-- OpenSearch core index APIs:
-  <https://docs.opensearch.org/latest/api-reference/index-apis/core-index-apis/>
-- OpenSearch document APIs:
-  <https://docs.opensearch.org/latest/api-reference/document-apis/index/>
-- OpenSearch Bulk API:
-  <https://docs.opensearch.org/latest/api-reference/document-apis/bulk/>
-- OpenSearch Search API:
-  <https://docs.opensearch.org/latest/api-reference/search-apis/search/>
-- OpenSearch Query DSL bool query:
-  <https://docs.opensearch.org/latest/query-dsl/compound/bool/>
-- OpenSearch language clients:
-  <https://docs.opensearch.org/latest/clients/>
 - OpenSearch API specification repository:
   <https://github.com/opensearch-project/opensearch-api-specification>
+- OpenSearch language clients:
+  <https://docs.opensearch.org/latest/clients/>
