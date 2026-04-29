@@ -1,0 +1,7 @@
+/target
+/data
+*.jsonl
+*.log
+Cargo.lock
+.env
+.DS_Store
