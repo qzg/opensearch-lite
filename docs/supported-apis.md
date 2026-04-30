@@ -36,11 +36,15 @@ and `admin` requires `admin`.
 | `indices.refresh` | implemented | write | No-op visibility barrier; writes are already visible after commit in the local store. |
 | `bulk` | implemented | write | `POST`/`PUT` only; malformed source lines and invalid metadata produce errors without mutation. |
 | `search`, `count`, `mget`, `msearch` | implemented | read | In-memory search and read APIs, including read APIs that use `POST`; supports the documented Discover query and first visualization aggregation subset. |
+| `scroll`, `clear_scroll` | implemented | read | In-memory process-local scroll cursors for migration-style batched reads; cursors are not durable across restarts. |
+| `reindex`, `tasks.get` | implemented | write/read | Reindex executes synchronously against local data; `wait_for_completion=false` returns a synthetic completed task for polling clients. |
+| `delete_by_query`, `update_by_query` | implemented/narrow | write | Query-matched local mutation. `update_by_query` only supports the saved-object namespace/workspace removal scripts used by Dashboards-style clients. |
 
-The first Dashboards-shaped fixture tranche covers data-view metadata,
-Discover-style search, and simple visualization aggregations without runtime
-agent fallback. This is fixture-level compatibility only; live OpenSearch
-Dashboards support remains a separate smoke-test milestone.
+The first Dashboards-shaped fixture tranches cover data-view metadata,
+Discover-style search, simple visualization aggregations, and saved-object
+migration primitives without runtime agent fallback. This is fixture-level
+compatibility only; live OpenSearch Dashboards support remains a separate
+smoke-test milestone.
 
 ### Search And Aggregation Guardrails
 
@@ -79,9 +83,9 @@ compatibility headers:
 Only explicitly read-oriented OpenSearch APIs are eligible for runtime agent
 fallback. Unknown `GET` requests may still use fallback when configured, but
 their context is metadata-only; unknown `POST` requests fail closed. Mutating
-APIs such as `_delete_by_query`, `_update_by_query`, `_reindex`, scripts,
-snapshots, pipelines, task cancellation, and other write/control routes are
-never routed to fallback.
+APIs outside the deterministic local surface, scripts outside the narrow
+saved-object update subset, snapshots, pipelines, task cancellation, and other
+write/control routes are never routed to fallback.
 
 Unsupported routes return structured OpenSearch-shaped errors with recovery
 hints for agent callers.

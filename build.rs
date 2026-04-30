@@ -124,7 +124,7 @@ fn access_for(name: &str, methods: &[String]) -> &'static str {
 fn is_admin_api(name: &str) -> bool {
     name.starts_with("security.")
         || name.starts_with("snapshot.")
-        || name.starts_with("tasks.")
+        || (name.starts_with("tasks.") && name != "tasks.get")
         || name.starts_with("cluster.put_")
         || name.starts_with("cluster.delete_")
 }
@@ -143,6 +143,8 @@ fn is_read_api(name: &str) -> bool {
             | "field_caps"
             | "mget"
             | "msearch"
+            | "scroll"
+            | "clear_scroll"
             | "indices.get"
             | "indices.exists"
             | "indices.get_mapping"
@@ -157,6 +159,7 @@ fn is_read_api(name: &str) -> bool {
             | "cluster.get_settings"
             | "nodes.info"
             | "nodes.stats"
+            | "tasks.get"
             | "cat.indices"
     ) || name.starts_with("cat.")
 }
@@ -176,8 +179,13 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
             | "count"
             | "mget"
             | "msearch"
+            | "scroll"
+            | "clear_scroll"
             | "get_source"
             | "exists_source"
+            | "delete_by_query"
+            | "update_by_query"
+            | "reindex"
             | "indices.create"
             | "indices.get"
             | "indices.delete"
@@ -199,6 +207,7 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
             | "indices.update_aliases"
             | "field_caps"
             | "cluster.stats"
+            | "tasks.get"
             | "cat.plugins"
             | "cat.templates"
     ) {

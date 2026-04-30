@@ -309,6 +309,52 @@ impl Store {
         Ok(results)
     }
 
+    pub fn apply_dynamic_write_operations_atomic<T>(
+        &self,
+        build_operations: impl FnOnce(&Database) -> StoreResult<(Vec<WriteOperation>, T)>,
+    ) -> StoreResult<(Vec<WriteOutcome>, T)> {
+        let _commit = self.commit_lock.lock().map_err(|_| {
+            StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
+        })?;
+        let mut db = self.inner.write().map_err(|_| {
+            StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
+        })?;
+        let before = db.clone();
+        let (operations, metadata) = build_operations(&before)?;
+        let mut candidate = before.clone();
+        let mut committed_mutations = Vec::new();
+        let mut outcomes = Vec::with_capacity(operations.len());
+
+        for operation in operations {
+            let prepared = self.prepare_write_operation(&candidate, operation)?;
+            for mutation in &prepared.mutations {
+                self.validate_mutation(&candidate, mutation)?;
+                mutation.apply_to(&mut candidate);
+                self.validate_memory(&candidate)?;
+            }
+            outcomes.push(prepared.outcome.resolve(&candidate)?);
+            committed_mutations.extend(prepared.mutations);
+        }
+
+        if !committed_mutations.is_empty() {
+            if !self.ephemeral {
+                self.append_committed_transaction(
+                    &mut db,
+                    &before,
+                    &candidate,
+                    &committed_mutations,
+                )?;
+            } else {
+                *db = candidate;
+            }
+        }
+        drop(db);
+        if !committed_mutations.is_empty() {
+            self.write_snapshot();
+        }
+        Ok((outcomes, metadata))
+    }
+
     fn append_committed_transaction(
         &self,
         db: &mut Database,

@@ -27,6 +27,9 @@ use crate::{
     },
 };
 
+const MAX_SCROLL_RETAINED_HITS: usize = 10_000;
+const MAX_SCROLL_RETAINED_BYTES: usize = 32 * 1024 * 1024;
+
 pub async fn handle_request(state: AppState, request: Request) -> Response {
     let route = api_spec::classify(&request.method, &request.path);
     if let Err(response) = security::authz::authorize(&request, &route) {
@@ -62,6 +65,26 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     }
 
     let parts = segments(&request.path);
+    if parts.first() == Some(&"_tasks") && parts.len() == 2 {
+        return handle_task_get(&state, parts[1]);
+    }
+    if request.path == "/_reindex" {
+        return handle_reindex(&state, &request).await;
+    }
+    if request.path == "/_search/scroll" || request.path == "/_scroll" {
+        return if request.method == Method::DELETE {
+            handle_clear_scroll(&state, &request, None)
+        } else {
+            handle_scroll(&state, &request, None)
+        };
+    }
+    if matches!(parts.as_slice(), ["_search", "scroll", _] | ["_scroll", _]) {
+        return if request.method == Method::DELETE {
+            handle_clear_scroll(&state, &request, parts.last().copied())
+        } else {
+            handle_scroll(&state, &request, parts.last().copied())
+        };
+    }
     if request.path == "/_bulk" || parts.get(1) == Some(&"_bulk") {
         let path_index = if request.path == "/_bulk" {
             None
@@ -75,6 +98,12 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     }
     if request.path == "/_search" || parts.get(1) == Some(&"_search") {
         return handle_search(&state, &request, parts.first().copied());
+    }
+    if matches!(parts.as_slice(), [_, "_delete_by_query"]) {
+        return handle_delete_by_query(&state, &request, parts.first().copied()).await;
+    }
+    if matches!(parts.as_slice(), [_, "_update_by_query"]) {
+        return handle_update_by_query(&state, &request, parts.first().copied()).await;
     }
     if request.path == "/_count" || parts.get(1) == Some(&"_count") {
         return handle_count(&state, &request, parts.first().copied());
@@ -1418,6 +1447,7 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
     }
     let from = numeric_param(&body, &request.query, "from", 0);
     let size = numeric_param(&body, &request.query, "size", 10);
+    let scroll_requested = request.query_value("scroll").is_some() || body.get("scroll").is_some();
     if let Err(error) = search_engine::limits::validate_request(
         &body,
         from,
@@ -1432,6 +1462,16 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
             error_type,
             error,
             Some("Use a narrower query for OpenSearch Lite or raise the relevant local limit."),
+        );
+    }
+    if scroll_requested && size > MAX_SCROLL_RETAINED_HITS {
+        return open_search_error(
+            400,
+            "resource_limit_exception",
+            format!(
+                "scroll page size [{size}] exceeds the local scroll page limit [{MAX_SCROLL_RETAINED_HITS}]"
+            ),
+            Some("Use a smaller scroll size for OpenSearch Lite."),
         );
     }
     let indices = path_indices(path_index, "_search");
@@ -1450,12 +1490,22 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
                 indices,
                 body,
                 from,
-                size,
+                size: if scroll_requested {
+                    scroll_capture_size(state, size)
+                } else {
+                    size
+                },
             },
         )
     });
     match search_result {
         Ok(Ok(mut body)) => {
+            if scroll_requested {
+                body = match scroll_response(state, body, size) {
+                    Ok(body) => body,
+                    Err(response) => return response,
+                };
+            }
             if request.query_value("rest_total_hits_as_int") == Some("true") {
                 if let Some(total) = body["hits"]["total"]["value"].as_u64() {
                     body["hits"]["total"] = json!(total);
@@ -1474,6 +1524,120 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
             error.error_type,
             error.reason,
             Some("Retry the search request."),
+        ),
+    }
+}
+
+fn scroll_capture_size(state: &AppState, batch_size: usize) -> usize {
+    state
+        .config
+        .max_result_window
+        .min(MAX_SCROLL_RETAINED_HITS)
+        .max(batch_size.max(1))
+}
+
+fn scroll_response(
+    state: &AppState,
+    mut body: Value,
+    batch_size: usize,
+) -> Result<Value, Response> {
+    let hits = body["hits"]["hits"].as_array().cloned().unwrap_or_default();
+    let total = body["hits"]["total"].clone();
+    let max_score = body["hits"]["max_score"].clone();
+    let page = state
+        .runtime
+        .create_scroll(
+            hits,
+            total,
+            max_score,
+            batch_size,
+            scroll_memory_budget(state),
+        )
+        .map_err(|error| {
+            open_search_error(
+                error.status,
+                error.error_type,
+                error.reason,
+                Some("Clear old scroll contexts or use a narrower query."),
+            )
+        })?;
+    body["_scroll_id"] = json!(page.scroll_id);
+    body["hits"]["total"] = page.total;
+    body["hits"]["max_score"] = page.max_score;
+    body["hits"]["hits"] = Value::Array(page.hits);
+    Ok(body)
+}
+
+fn scroll_memory_budget(state: &AppState) -> usize {
+    state
+        .config
+        .memory_limit_bytes
+        .min(MAX_SCROLL_RETAINED_BYTES)
+}
+
+fn handle_scroll(state: &AppState, request: &Request, path_scroll_id: Option<&str>) -> Response {
+    let scroll_id = match path_scroll_id
+        .map(ToString::to_string)
+        .or_else(|| scroll_id_from_request(request))
+    {
+        Some(scroll_id) => scroll_id,
+        None => return parse_error("scroll request requires [scroll_id]".to_string()),
+    };
+    match state.runtime.next_scroll(&scroll_id) {
+        Some(page) => Response::json(
+            200,
+            json!({
+                "_scroll_id": page.scroll_id,
+                "took": 0,
+                "timed_out": false,
+                "_shards": { "total": 1, "successful": 1, "skipped": 0, "failed": 0 },
+                "hits": {
+                    "total": page.total,
+                    "max_score": page.max_score,
+                    "hits": page.hits
+                }
+            }),
+        ),
+        None => open_search_error(
+            404,
+            "search_context_missing_exception",
+            format!("No search context found for id [{scroll_id}]"),
+            Some("Start a new search with a scroll parameter and use the returned _scroll_id."),
+        ),
+    }
+}
+
+fn handle_clear_scroll(
+    state: &AppState,
+    request: &Request,
+    path_scroll_id: Option<&str>,
+) -> Response {
+    let mut scroll_ids = Vec::new();
+    if let Some(path_scroll_id) = path_scroll_id {
+        scroll_ids.push(path_scroll_id.to_string());
+    }
+    scroll_ids.extend(scroll_ids_from_request(request));
+    if scroll_ids.is_empty() {
+        return parse_error("clear scroll requires [scroll_id]".to_string());
+    }
+    let num_freed = state.runtime.clear_scrolls(&scroll_ids);
+    Response::json(
+        200,
+        json!({
+            "succeeded": true,
+            "num_freed": num_freed
+        }),
+    )
+}
+
+fn handle_task_get(state: &AppState, task_id: &str) -> Response {
+    match state.runtime.task(task_id) {
+        Some(task) => Response::json(200, task.response_body()),
+        None => open_search_error(
+            404,
+            "resource_not_found_exception",
+            format!("task [{task_id}] is missing"),
+            Some("Only completed local tasks created during this process are available."),
         ),
     }
 }
@@ -1543,6 +1707,243 @@ fn handle_count(state: &AppState, request: &Request, path_index: Option<&str>) -
         ),
         Err(error) => store_error(error),
     }
+}
+
+async fn handle_delete_by_query(
+    state: &AppState,
+    request: &Request,
+    path_index: Option<&str>,
+) -> Response {
+    let (_body, query) =
+        match parse_by_query_request(state, request, ByQueryQueryMode::RequireQuery) {
+            Ok(parsed) => parsed,
+            Err(response) => return response,
+        };
+    let indices = path_indices(path_index, "_delete_by_query");
+    let result = apply_dynamic_bulk_by_query_operations(state, move |db| {
+        let matched = matching_documents(db, &indices, &query)?;
+        let total = matched.len();
+        let operations = matched
+            .into_iter()
+            .map(|doc| WriteOperation::DeleteDocument {
+                index: doc.index,
+                id: doc.id,
+            })
+            .collect::<Vec<_>>();
+        Ok((
+            operations,
+            ByQueryPlan {
+                total,
+                ..Default::default()
+            },
+        ))
+    })
+    .await;
+    let (outcome, plan) = match result {
+        Ok(result) => result,
+        Err(error) => return store_error(error),
+    };
+    Response::json(
+        200,
+        bulk_by_query_response(
+            plan.total,
+            0,
+            0,
+            outcome.deleted,
+            0,
+            outcome.version_conflicts,
+        ),
+    )
+}
+
+async fn handle_update_by_query(
+    state: &AppState,
+    request: &Request,
+    path_index: Option<&str>,
+) -> Response {
+    let (body, query) =
+        match parse_by_query_request(state, request, ByQueryQueryMode::DefaultMatchAll) {
+            Ok(parsed) => parsed,
+            Err(response) => return response,
+        };
+    let Some(script) = body.get("script") else {
+        return open_search_error(
+            400,
+            "script_exception",
+            "update_by_query requires a supported script in OpenSearch Lite",
+            Some("Use delete_by_query for pure deletes, or use the saved-object namespace/workspace removal script shape."),
+        );
+    };
+    let script = match parse_saved_object_update_script(script) {
+        Ok(script) => script,
+        Err(error) => return update_by_query_script_error(error),
+    };
+    let indices = path_indices(path_index, "_update_by_query");
+    let result = apply_dynamic_bulk_by_query_operations(state, move |db| {
+        let matched = matching_documents(db, &indices, &query)?;
+        let total = matched.len();
+        let mut noops = 0usize;
+        let mut operations = Vec::new();
+        for doc in matched {
+            match apply_saved_object_update_script(&doc.source, &script) {
+                Ok(UpdateByQueryAction::Delete) => {
+                    operations.push(WriteOperation::DeleteDocument {
+                        index: doc.index,
+                        id: doc.id,
+                    })
+                }
+                Ok(UpdateByQueryAction::Index(source)) => {
+                    operations.push(WriteOperation::IndexDocument {
+                        index: doc.index,
+                        id: doc.id,
+                        source,
+                    })
+                }
+                Ok(UpdateByQueryAction::Noop) => noops += 1,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok((
+            operations,
+            ByQueryPlan {
+                total,
+                noops,
+                ..Default::default()
+            },
+        ))
+    })
+    .await;
+    let (outcome, plan) = match result {
+        Ok(result) => result,
+        Err(error) => return store_error(error),
+    };
+    Response::json(
+        200,
+        bulk_by_query_response(
+            plan.total,
+            outcome.updated,
+            0,
+            outcome.deleted,
+            plan.noops,
+            outcome.version_conflicts,
+        ),
+    )
+}
+
+async fn handle_reindex(state: &AppState, request: &Request) -> Response {
+    if let Err(error) = search_engine::limits::validate_body_bytes(request.body.len()) {
+        return open_search_error(
+            413,
+            "content_too_long_exception",
+            error,
+            Some("Reduce the reindex request size."),
+        );
+    }
+    let body = match request.body_json() {
+        Ok(body) => body,
+        Err(error) => return parse_error(error),
+    };
+    let source_indices = match reindex_source_indices(&body) {
+        Ok(indices) => indices,
+        Err(error) => return store_error(error),
+    };
+    let dest_index = match body
+        .get("dest")
+        .and_then(|dest| dest.get("index"))
+        .and_then(Value::as_str)
+    {
+        Some(index) if !index.trim().is_empty() => index.to_string(),
+        _ => {
+            return store_error(StoreError::new(
+                400,
+                "illegal_argument_exception",
+                "reindex requires dest.index",
+            ));
+        }
+    };
+    let op_type = match reindex_op_type(&body) {
+        Ok(op_type) => op_type,
+        Err(error) => return store_error(error),
+    };
+    let conflicts_proceed = request.query_value("conflicts") == Some("proceed")
+        || body.get("conflicts").and_then(Value::as_str) == Some("proceed");
+    let query = body
+        .get("source")
+        .and_then(|source| source.get("query"))
+        .cloned()
+        .unwrap_or_else(|| json!({"match_all": {}}));
+    if let Err(error) = validate_query_only(state, request.body.len(), &query) {
+        return error;
+    }
+    let script = body.get("script").cloned();
+    let dest_index_for_plan = dest_index.clone();
+    let result = apply_dynamic_bulk_by_query_operations(state, move |db| {
+        let matched = matching_documents(db, &source_indices, &query)?;
+        let total = matched.len();
+        let mut operations = Vec::new();
+        let mut planned_create_ids = BTreeSet::new();
+        let mut version_conflicts = 0usize;
+        for doc in matched {
+            let id = reindex_document_id(&doc, script.as_ref())?;
+            if op_type == ReindexOpType::Create {
+                let already_exists = document_exists(db, &dest_index_for_plan, &id)
+                    || !planned_create_ids.insert(id.clone());
+                if already_exists {
+                    version_conflicts += 1;
+                    if !conflicts_proceed {
+                        return Err(StoreError::new(
+                            409,
+                            "version_conflict_engine_exception",
+                            format!("document [{id}] already exists"),
+                        ));
+                    }
+                    continue;
+                }
+            }
+            let operation = match op_type {
+                ReindexOpType::Index => WriteOperation::IndexDocument {
+                    index: dest_index_for_plan.clone(),
+                    id,
+                    source: doc.source,
+                },
+                ReindexOpType::Create => WriteOperation::CreateDocument {
+                    index: dest_index_for_plan.clone(),
+                    id,
+                    source: doc.source,
+                },
+            };
+            operations.push(operation);
+        }
+        Ok((
+            operations,
+            ByQueryPlan {
+                total,
+                version_conflicts,
+                ..Default::default()
+            },
+        ))
+    })
+    .await;
+    let (mut outcome, plan) = match result {
+        Ok(result) => result,
+        Err(error) => return store_error(error),
+    };
+    outcome.version_conflicts += plan.version_conflicts;
+    let response = bulk_by_query_response(
+        plan.total,
+        outcome.updated,
+        outcome.created,
+        0,
+        0,
+        outcome.version_conflicts,
+    );
+    if request.query_value("wait_for_completion") == Some("false") {
+        let task = state
+            .runtime
+            .record_completed_task("indices:data/write/reindex", response);
+        return Response::json(200, json!({ "task": task }));
+    }
+    Response::json(200, response)
 }
 
 fn handle_mget(state: &AppState, request: &Request, path_index: Option<&str>) -> Response {
@@ -1667,6 +2068,416 @@ fn handle_msearch(state: &AppState, request: &Request, path_index: Option<&str>)
         }
     }
     Response::json(200, json!({ "responses": responses }))
+}
+
+#[derive(Debug, Clone)]
+struct MatchedDoc {
+    index: String,
+    id: String,
+    source: Value,
+}
+
+#[derive(Debug, Default)]
+struct BulkByQueryOutcome {
+    created: usize,
+    updated: usize,
+    deleted: usize,
+    version_conflicts: usize,
+}
+
+enum UpdateByQueryAction {
+    Delete,
+    Index(Value),
+    Noop,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ByQueryQueryMode {
+    RequireQuery,
+    DefaultMatchAll,
+}
+
+#[derive(Debug, Clone)]
+enum SavedObjectListRemoval {
+    Namespace { namespace: String },
+    Workspace { workspace: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReindexOpType {
+    Index,
+    Create,
+}
+
+#[derive(Debug, Default)]
+struct ByQueryPlan {
+    total: usize,
+    noops: usize,
+    version_conflicts: usize,
+}
+
+fn parse_by_query_request(
+    state: &AppState,
+    request: &Request,
+    query_mode: ByQueryQueryMode,
+) -> Result<(Value, Value), Response> {
+    if let Err(error) = search_engine::limits::validate_body_bytes(request.body.len()) {
+        return Err(open_search_error(
+            413,
+            "content_too_long_exception",
+            error,
+            Some("Reduce the by-query request size."),
+        ));
+    }
+    let body = request.body_json().map_err(parse_error)?;
+    let query = match body.get("query") {
+        Some(query) => query.clone(),
+        None if matches!(query_mode, ByQueryQueryMode::DefaultMatchAll) => {
+            json!({"match_all": {}})
+        }
+        None => {
+            return Err(open_search_error(
+                400,
+                "action_request_validation_exception",
+                "Validation Failed: 1: query is missing;",
+                Some("Provide an explicit query object; use match_all only when you intend to affect every matching document."),
+            ));
+        }
+    };
+    validate_query_only(state, request.body.len(), &query)?;
+    Ok((body, query))
+}
+
+fn validate_query_only(state: &AppState, body_len: usize, query: &Value) -> Result<(), Response> {
+    if let Err(error) = search_engine::limits::validate_body_bytes(body_len) {
+        return Err(open_search_error(
+            413,
+            "content_too_long_exception",
+            error,
+            Some("Reduce the request size."),
+        ));
+    }
+    let body = json!({ "query": query });
+    search_engine::limits::validate_request(
+        &body,
+        0,
+        0,
+        search_engine::limits::SearchLimits {
+            max_result_window: state.config.max_result_window,
+        },
+    )
+    .map_err(|error| {
+        open_search_error(
+            400,
+            search_validation_error_type(&error),
+            error,
+            Some("Use a narrower query for OpenSearch Lite."),
+        )
+    })
+}
+
+fn matching_documents(
+    db: &Database,
+    requested: &[String],
+    query: &Value,
+) -> StoreResult<Vec<MatchedDoc>> {
+    let names = resolve_index_patterns(db, requested)?;
+    let mut matches = Vec::new();
+    for index_name in names {
+        let Some(index) = db.indexes.get(&index_name) else {
+            continue;
+        };
+        for doc in index.documents.values() {
+            let matched = search_engine::evaluator::document_matches(doc, query)
+                .map_err(|error| StoreError::new(400, "x_content_parse_exception", error))?;
+            if matched {
+                matches.push(MatchedDoc {
+                    index: index_name.clone(),
+                    id: doc.id.clone(),
+                    source: doc.source.clone(),
+                });
+            }
+        }
+    }
+    Ok(matches)
+}
+
+async fn apply_dynamic_bulk_by_query_operations<T>(
+    state: &AppState,
+    build_operations: impl FnOnce(&Database) -> StoreResult<(Vec<WriteOperation>, T)> + Send + 'static,
+) -> StoreResult<(BulkByQueryOutcome, T)>
+where
+    T: Send + 'static,
+{
+    let (results, metadata) = run_store(state.store.clone(), move |store| {
+        store.apply_dynamic_write_operations_atomic(build_operations)
+    })
+    .await?;
+    let mut outcome = BulkByQueryOutcome::default();
+    for result in results {
+        match result {
+            WriteOutcome::Document(doc) => {
+                if doc.version == 1 {
+                    outcome.created += 1;
+                } else {
+                    outcome.updated += 1;
+                }
+            }
+            WriteOutcome::Deleted { found } => {
+                if found {
+                    outcome.deleted += 1;
+                }
+            }
+        }
+    }
+    Ok((outcome, metadata))
+}
+
+fn bulk_by_query_response(
+    total: usize,
+    updated: usize,
+    created: usize,
+    deleted: usize,
+    noops: usize,
+    version_conflicts: usize,
+) -> Value {
+    json!({
+        "took": 0,
+        "timed_out": false,
+        "total": total,
+        "updated": updated,
+        "created": created,
+        "deleted": deleted,
+        "batches": if total == 0 { 0 } else { 1 },
+        "version_conflicts": version_conflicts,
+        "noops": noops,
+        "retries": {
+            "bulk": 0,
+            "search": 0
+        },
+        "throttled_millis": 0,
+        "requests_per_second": -1.0,
+        "throttled_until_millis": 0,
+        "failures": [],
+        "_shards": {
+            "total": 1,
+            "successful": 1,
+            "failed": 0
+        }
+    })
+}
+
+fn parse_saved_object_update_script(script: &Value) -> StoreResult<SavedObjectListRemoval> {
+    let script_source = script
+        .get("source")
+        .and_then(Value::as_str)
+        .ok_or_else(|| StoreError::new(400, "script_exception", "script.source is required"))?;
+    if let Some(lang) = script.get("lang").and_then(Value::as_str) {
+        if lang != "painless" {
+            return Err(StoreError::new(
+                400,
+                "script_exception",
+                "saved-object update_by_query scripts must use painless",
+            ));
+        }
+    }
+    let normalized = normalize_script_source(script_source);
+    if normalized == saved_object_removal_script("namespaces", "namespace") {
+        let namespace = script_param(script, "namespace")?;
+        return Ok(SavedObjectListRemoval::Namespace { namespace });
+    }
+    if normalized == saved_object_removal_script("workspaces", "workspace") {
+        let workspace = script_param(script, "workspace")?;
+        return Ok(SavedObjectListRemoval::Workspace { workspace });
+    }
+    Err(StoreError::new(
+        400,
+        "script_exception",
+        "unsupported update_by_query script for OpenSearch Lite",
+    ))
+}
+
+fn update_by_query_script_error(error: StoreError) -> Response {
+    open_search_error(
+        error.status,
+        error.error_type,
+        error.reason,
+        Some("Use the saved-object namespace/workspace removal script shape from the migration tests, or simplify the request."),
+    )
+}
+
+fn normalize_script_source(script_source: &str) -> String {
+    script_source
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .map(|character| if character == '"' { '\'' } else { character })
+        .collect()
+}
+
+fn saved_object_removal_script(field: &str, param: &str) -> String {
+    format!(
+        "if(!ctx._source.containsKey('{field}')){{ctx.op='delete';}}else{{ctx._source['{field}'].removeAll(Collections.singleton(params['{param}']));if(ctx._source['{field}'].empty){{ctx.op='delete';}}}}"
+    )
+}
+
+fn script_param(script: &Value, name: &'static str) -> StoreResult<String> {
+    let params = script.get("params").unwrap_or(&Value::Null);
+    params
+        .get(name)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            StoreError::new(
+                400,
+                "script_exception",
+                format!("saved-object removal script requires params.{name}"),
+            )
+        })
+}
+
+fn apply_saved_object_update_script(
+    source: &Value,
+    script: &SavedObjectListRemoval,
+) -> StoreResult<UpdateByQueryAction> {
+    match script {
+        SavedObjectListRemoval::Namespace { namespace } => {
+            remove_saved_object_list_value(source, "namespaces", namespace.as_str())
+        }
+        SavedObjectListRemoval::Workspace { workspace } => {
+            remove_saved_object_list_value(source, "workspaces", workspace.as_str())
+        }
+    }
+}
+
+fn remove_saved_object_list_value(
+    source: &Value,
+    field: &str,
+    target: &str,
+) -> StoreResult<UpdateByQueryAction> {
+    let Some(object) = source.as_object() else {
+        return Err(StoreError::new(
+            400,
+            "script_exception",
+            "saved-object update script requires an object source",
+        ));
+    };
+    let Some(value) = object.get(field) else {
+        return Ok(UpdateByQueryAction::Delete);
+    };
+    let Some(values) = value.as_array() else {
+        return Err(StoreError::new(
+            400,
+            "script_exception",
+            format!("saved-object field [{field}] must be an array"),
+        ));
+    };
+    let retained = values
+        .iter()
+        .filter(|value| value.as_str() != Some(target))
+        .cloned()
+        .collect::<Vec<_>>();
+    if retained.len() == values.len() {
+        return Ok(UpdateByQueryAction::Noop);
+    }
+    if retained.is_empty() {
+        return Ok(UpdateByQueryAction::Delete);
+    }
+    let mut source = source.clone();
+    source[field] = Value::Array(retained);
+    Ok(UpdateByQueryAction::Index(source))
+}
+
+fn reindex_source_indices(body: &Value) -> StoreResult<Vec<String>> {
+    let Some(source) = body.get("source") else {
+        return Err(StoreError::new(
+            400,
+            "illegal_argument_exception",
+            "reindex requires source.index",
+        ));
+    };
+    match source.get("index") {
+        Some(Value::String(index)) if !index.trim().is_empty() => {
+            Ok(index.split(',').map(ToString::to_string).collect())
+        }
+        Some(Value::Array(indices)) => {
+            let indices = indices
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|index| !index.trim().is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            if indices.is_empty() {
+                Err(StoreError::new(
+                    400,
+                    "illegal_argument_exception",
+                    "reindex source.index must not be empty",
+                ))
+            } else {
+                Ok(indices)
+            }
+        }
+        _ => Err(StoreError::new(
+            400,
+            "illegal_argument_exception",
+            "reindex requires source.index",
+        )),
+    }
+}
+
+fn reindex_op_type(body: &Value) -> StoreResult<ReindexOpType> {
+    match body
+        .get("dest")
+        .and_then(|dest| dest.get("op_type"))
+        .and_then(Value::as_str)
+    {
+        None | Some("index") => Ok(ReindexOpType::Index),
+        Some("create") => Ok(ReindexOpType::Create),
+        Some(op_type) => Err(StoreError::new(
+            400,
+            "illegal_argument_exception",
+            format!("unsupported reindex dest.op_type [{op_type}]"),
+        )),
+    }
+}
+
+fn document_exists(db: &Database, index_or_alias: &str, id: &str) -> bool {
+    db.resolve_index(index_or_alias)
+        .and_then(|index| {
+            db.indexes
+                .get(&index)
+                .and_then(|index| index.documents.get(id))
+        })
+        .is_some()
+}
+
+fn reindex_document_id(doc: &MatchedDoc, script: Option<&Value>) -> StoreResult<String> {
+    let Some(script) = script else {
+        return Ok(doc.id.clone());
+    };
+    let script_source = script
+        .get("source")
+        .and_then(Value::as_str)
+        .ok_or_else(|| StoreError::new(400, "script_exception", "script.source is required"))?;
+    if script_source.trim() == "ctx._id = ctx._source.type + ':' + ctx._id" {
+        let doc_type = doc
+            .source
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::new(
+                    400,
+                    "script_exception",
+                    "reindex id rewrite script requires _source.type",
+                )
+            })?;
+        return Ok(format!("{doc_type}:{}", doc.id));
+    }
+    Err(StoreError::new(
+        400,
+        "script_exception",
+        "unsupported reindex script for OpenSearch Lite",
+    ))
 }
 
 fn handle_stats(state: &AppState, parts: &[&str]) -> Response {
@@ -2395,6 +3206,53 @@ fn path_indices(path_index: Option<&str>, suffix: &str) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn scroll_id_from_request(request: &Request) -> Option<String> {
+    request
+        .query_value("scroll_id")
+        .map(ToString::to_string)
+        .or_else(|| {
+            request
+                .body_json()
+                .ok()
+                .and_then(|body| {
+                    body.get("scroll_id")
+                        .or_else(|| body.get("scrollId"))
+                        .cloned()
+                })
+                .and_then(|value| match value {
+                    Value::String(value) => Some(value),
+                    Value::Array(values) => values
+                        .first()
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                    _ => None,
+                })
+        })
+}
+
+fn scroll_ids_from_request(request: &Request) -> Vec<String> {
+    let mut ids = request
+        .query
+        .iter()
+        .filter_map(|(key, value)| (key == "scroll_id").then_some(value.clone()))
+        .collect::<Vec<_>>();
+    if let Ok(body) = request.body_json() {
+        if let Some(value) = body.get("scroll_id").or_else(|| body.get("scrollId")) {
+            match value {
+                Value::String(value) => ids.push(value.clone()),
+                Value::Array(values) => ids.extend(
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string),
+                ),
+                _ => {}
+            }
+        }
+    }
+    ids
 }
 
 fn comma_query_values(value: Option<&str>) -> Option<Vec<String>> {

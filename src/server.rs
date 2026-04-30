@@ -15,6 +15,7 @@ use crate::{
     config::Config,
     http::{request::Request, router},
     responses::Response,
+    runtime::RuntimeState,
     security::{self, SecurityContext, SecurityState},
     storage::Store,
 };
@@ -25,6 +26,7 @@ pub struct AppState {
     pub store: Store,
     pub agent: AgentClient,
     pub security: SecurityState,
+    pub runtime: RuntimeState,
 }
 
 impl AppState {
@@ -38,6 +40,7 @@ impl AppState {
             store,
             agent,
             security,
+            runtime: RuntimeState::default(),
         })
     }
 
@@ -50,6 +53,7 @@ impl AppState {
             store,
             agent,
             security,
+            runtime: RuntimeState::default(),
         })
     }
 }

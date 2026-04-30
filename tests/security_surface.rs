@@ -179,6 +179,9 @@ fn read_only_authorization_allows_read_post_apis_and_blocks_mutations() {
         (Method::POST, "/orders/_search"),
         (Method::POST, "/orders/_count"),
         (Method::POST, "/orders/_field_caps"),
+        (Method::POST, "/_search/scroll"),
+        (Method::DELETE, "/_search/scroll"),
+        (Method::GET, "/_tasks/opensearch-lite-task:1"),
         (Method::GET, "/_cluster/stats"),
         (Method::GET, "/_cat/plugins"),
         (Method::POST, "/_mget"),
@@ -199,12 +202,19 @@ fn read_only_authorization_allows_read_post_apis_and_blocks_mutations() {
         (Method::DELETE, "/_template/orders"),
         (Method::POST, "/_aliases"),
         (Method::POST, "/_alias"),
+        (Method::POST, "/orders/_delete_by_query"),
+        (Method::POST, "/orders/_update_by_query"),
+        (Method::POST, "/_reindex"),
     ] {
         let request = request_with_context(method.clone(), path, context.clone());
         let route = classify(&method, path);
         let response = authz::authorize(&request, &route).unwrap_err();
         assert_eq!(response.status, 403, "{method} {path}");
     }
+
+    let task_get = classify(&Method::GET, "/_tasks/opensearch-lite-task:1");
+    assert_eq!(task_get.tier, Tier::Implemented);
+    assert_eq!(task_get.access, AccessClass::Read);
 }
 
 #[test]

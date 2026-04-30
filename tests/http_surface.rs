@@ -250,7 +250,7 @@ async fn mutating_post_routes_do_not_enter_agent_fallback() {
     )
     .await;
 
-    assert_eq!(response.status, 501);
+    assert_eq!(response.status, 404);
     assert_ne!(response.body.unwrap()["agent"], "answered");
 }
 

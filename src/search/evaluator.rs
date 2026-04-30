@@ -110,6 +110,10 @@ fn matches_query(doc: &StoredDocument, query: &Value) -> Result<bool, String> {
     matches_query_source(&doc.source, &doc.id, query)
 }
 
+pub fn document_matches(doc: &StoredDocument, query: &Value) -> Result<bool, String> {
+    matches_query(doc, query)
+}
+
 fn matches_query_source(source: &Value, id: &str, query: &Value) -> Result<bool, String> {
     let Some(object) = query.as_object() else {
         return Err("query must be an object".to_string());
@@ -128,7 +132,7 @@ fn matches_query_source(source: &Value, id: &str, query: &Value) -> Result<bool,
         let (field, expected) = single_field(term, "term")?;
         let expected = expected.get("value").unwrap_or(expected);
         return Ok(value_at(source, field)
-            .map(|actual| values_equal(actual, expected))
+            .map(|actual| value_matches_term(actual, expected))
             .unwrap_or(false));
     }
     if let Some(terms) = object.get("terms") {
@@ -383,6 +387,13 @@ fn values_equal(actual: &Value, expected: &Value) -> bool {
             .zip(expected.as_f64())
             .map(|(a, e)| (a - e).abs() < f64::EPSILON)
             .unwrap_or(false)
+}
+
+fn value_matches_term(actual: &Value, expected: &Value) -> bool {
+    match actual {
+        Value::Array(values) => values.iter().any(|actual| values_equal(actual, expected)),
+        actual => values_equal(actual, expected),
+    }
 }
 
 fn value_matches_any(actual: &Value, expected: &[Value]) -> bool {

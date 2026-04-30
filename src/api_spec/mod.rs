@@ -45,10 +45,42 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
         };
     }
 
+    if segments.as_slice() == ["_tasks"] {
+        return route("security_or_control", Tier::Unsupported, AccessClass::Admin);
+    }
+    if matches!(segments.as_slice(), ["_tasks", _]) {
+        return match *method {
+            Method::GET => route("tasks.get", Tier::Implemented, AccessClass::Read),
+            _ => route("tasks.get", Tier::Unsupported, AccessClass::Admin),
+        };
+    }
     if control_namespace(&segments) {
         return route("security_or_control", Tier::Unsupported, AccessClass::Admin);
     }
 
+    if path == "/_reindex" {
+        return match *method {
+            Method::POST => route("reindex", Tier::Implemented, AccessClass::Write),
+            _ => unsupported_method("reindex", method),
+        };
+    }
+    if path == "/_search/scroll" || path == "/_scroll" {
+        return match *method {
+            Method::GET | Method::POST => route("scroll", Tier::Implemented, AccessClass::Read),
+            Method::DELETE => route("clear_scroll", Tier::Implemented, AccessClass::Read),
+            _ => unsupported_method("scroll", method),
+        };
+    }
+    if matches!(
+        segments.as_slice(),
+        ["_search", "scroll", _] | ["_scroll", _]
+    ) {
+        return match *method {
+            Method::GET | Method::POST => route("scroll", Tier::Implemented, AccessClass::Read),
+            Method::DELETE => route("clear_scroll", Tier::Implemented, AccessClass::Read),
+            _ => unsupported_method("scroll", method),
+        };
+    }
     if path == "/_cluster/health" {
         return get_only(method, "cluster.health", Tier::BestEffort);
     }
@@ -108,6 +140,24 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
         return match *method {
             Method::GET | Method::POST => route("search", Tier::Implemented, AccessClass::Read),
             _ => unsupported_method("search", method),
+        };
+    }
+    if segments.as_slice() == ["_delete_by_query"] {
+        return unsupported_method("delete_by_query", method);
+    }
+    if matches!(segments.as_slice(), [_, "_delete_by_query"]) {
+        return match *method {
+            Method::POST => route("delete_by_query", Tier::Implemented, AccessClass::Write),
+            _ => unsupported_method("delete_by_query", method),
+        };
+    }
+    if segments.as_slice() == ["_update_by_query"] {
+        return unsupported_method("update_by_query", method);
+    }
+    if matches!(segments.as_slice(), [_, "_update_by_query"]) {
+        return match *method {
+            Method::POST => route("update_by_query", Tier::Implemented, AccessClass::Write),
+            _ => unsupported_method("update_by_query", method),
         };
     }
     if path == "/_count" || segments.get(1) == Some(&"_count") {

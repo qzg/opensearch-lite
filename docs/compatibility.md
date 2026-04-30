@@ -62,6 +62,10 @@ Security does not make best-effort or fallback routes look implemented.
 - First-tranche visualization aggregations: `terms`, `date_histogram`,
   `histogram`, `range`, `filters`, `missing`, `value_count`, `min`, `max`,
   `avg`, `sum`, `cardinality`, `stats`, and `top_hits`
+- Process-local scroll and clear-scroll cursors for migration-style batched
+  saved-object reads
+- Reindex with synthetic completed task metadata for `tasks.get`
+- Delete by query and narrow saved-object namespace/workspace update by query
 
 Unsupported mutating APIs are never routed to runtime fallback.
 
@@ -69,13 +73,13 @@ Unsupported mutating APIs are never routed to runtime fallback.
 
 The current Dashboards claim is deliberately narrow: OpenSearch Lite has a
 source-traceable fixture suite for data-view setup, Discover-style searches,
-and simple visualization aggregations based on the pinned OpenSearch Dashboards
-3.7.0 source signals recorded in
+simple visualization aggregations, and first saved-object migration primitives
+based on the pinned OpenSearch Dashboards 3.7.0 source signals recorded in
 `docs/opensearch-dashboards-gap-analysis.md`.
 
 This does not yet mean a live OpenSearch Dashboards process is supported. Saved
-object migration APIs such as scroll, reindex/tasks, delete-by-query, and
-update-by-query remain follow-up work.
+object migration coverage is still fixture-level and does not yet include a live
+Dashboards smoke.
 
 ## Query Guardrails
 

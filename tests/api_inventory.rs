@@ -48,12 +48,34 @@ fn vendored_opensearch_36_rest_spec_is_present() {
 fn mutating_post_routes_fail_closed_and_read_routes_remain_fallback_eligible() {
     let delete_by_query = classify(&Method::POST, "/orders/_delete_by_query");
     assert_eq!(delete_by_query.api_name, "delete_by_query");
-    assert_eq!(delete_by_query.tier, Tier::Unsupported);
+    assert_eq!(delete_by_query.tier, Tier::Implemented);
     assert_eq!(delete_by_query.access, AccessClass::Write);
 
     let delete_by_query_wrong_method = classify(&Method::GET, "/orders/_delete_by_query");
     assert_eq!(delete_by_query_wrong_method.api_name, "delete_by_query");
     assert_eq!(delete_by_query_wrong_method.tier, Tier::Unsupported);
+
+    for path in ["/_delete_by_query", "/orders/_delete_by_query/extra"] {
+        let route = classify(&Method::POST, path);
+        assert_eq!(route.tier, Tier::Unsupported, "{path}");
+        assert_eq!(route.access, AccessClass::Write, "{path}");
+    }
+
+    let update_by_query = classify(&Method::POST, "/orders/_update_by_query");
+    assert_eq!(update_by_query.api_name, "update_by_query");
+    assert_eq!(update_by_query.tier, Tier::Implemented);
+    assert_eq!(update_by_query.access, AccessClass::Write);
+
+    for path in ["/_update_by_query", "/orders/_update_by_query/extra"] {
+        let route = classify(&Method::POST, path);
+        assert_eq!(route.tier, Tier::Unsupported, "{path}");
+        assert_eq!(route.access, AccessClass::Write, "{path}");
+    }
+
+    let reindex = classify(&Method::POST, "/_reindex");
+    assert_eq!(reindex.api_name, "reindex");
+    assert_eq!(reindex.tier, Tier::Implemented);
+    assert_eq!(reindex.access, AccessClass::Write);
 
     let reindex_wrong_method = classify(&Method::GET, "/_reindex");
     assert_eq!(reindex_wrong_method.api_name, "reindex");
@@ -143,6 +165,12 @@ fn generated_inventory_contains_access_classes() {
         .find(|route| route.name == "indices.create")
         .expect("missing indices.create route");
     assert_eq!(create_index.access, AccessClass::Write);
+
+    let task_get = inventory
+        .iter()
+        .find(|route| route.name == "tasks.get")
+        .expect("missing tasks.get route");
+    assert_eq!(task_get.access, AccessClass::Read);
 }
 
 #[test]
@@ -234,6 +262,32 @@ fn dashboards_metadata_routes_have_specific_read_and_write_classes() {
     assert_eq!(alias_singular.api_name, "indices.update_aliases");
     assert_eq!(alias_singular.tier, Tier::Implemented);
     assert_eq!(alias_singular.access, AccessClass::Write);
+
+    for (method, path, api_name) in [
+        (Method::POST, "/_search/scroll", "scroll"),
+        (
+            Method::GET,
+            "/_search/scroll/opensearch-lite-scroll:1",
+            "scroll",
+        ),
+        (
+            Method::POST,
+            "/_search/scroll/opensearch-lite-scroll:1",
+            "scroll",
+        ),
+        (Method::DELETE, "/_search/scroll", "clear_scroll"),
+        (
+            Method::DELETE,
+            "/_search/scroll/opensearch-lite-scroll:1",
+            "clear_scroll",
+        ),
+        (Method::GET, "/_tasks/opensearch-lite-task:1", "tasks.get"),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Implemented, "{method} {path}");
+        assert_eq!(route.access, AccessClass::Read, "{method} {path}");
+    }
 }
 
 #[test]

@@ -101,6 +101,25 @@ import saved objects.
 | `update_by_query` | Saved-object namespace/workspace deletion rewrites or deletes matching docs. | Support a narrow safe subset for Dashboards scripts that remove namespace/workspace entries and set `ctx.op = "delete"`. Reject unknown scripts with actionable errors. |
 | `indices.update_aliases` `remove_index` | Migration can replace a concrete index with an alias. | Extend alias actions beyond `add`/`remove` to support `remove_index` atomically enough for local use. |
 
+### Current Status
+
+The first saved-object migration slice now has deterministic fixture coverage:
+
+- `scroll` and `clear_scroll` use process-local in-memory cursors for
+  migration-style batched reads.
+- `reindex` executes synchronously against local data. When
+  `wait_for_completion=false`, it returns a synthetic completed task ID that
+  `tasks.get` can poll.
+- `delete_by_query` shares the bounded query evaluator and commits matching
+  local deletes.
+- `update_by_query` supports the narrow Dashboards saved-object namespace and
+  workspace removal scripts. Other scripts fail with a structured
+  `script_exception` and do not mutate state.
+
+This is still fixture-level compatibility. The next confidence step is a live
+OpenSearch Dashboards smoke to expose any startup/migration shape gaps that the
+source-traceable fixtures did not exercise.
+
 ## Priority 3: Saved Object Search DSL
 
 The saved-object repository builds richer queries than the current scalar search
@@ -153,7 +172,7 @@ scope.
 
 ## Suggested Next Tranche
 
-Start a saved-object migration tranche around scroll, clear scroll,
-reindex/tasks, delete-by-query, and update-by-query. Those APIs are the next
-likely blockers for running a live OpenSearch Dashboards process against
-OpenSearch Lite.
+Run a live OpenSearch Dashboards smoke against OpenSearch Lite and capture the
+remaining route/shape failures as source-traceable fixtures. Likely follow-ups
+are migration edge-case response shapes, saved-object repository search
+variants, and any plugin startup metadata that appears in real traffic.
