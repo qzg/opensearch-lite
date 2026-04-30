@@ -15,8 +15,9 @@ set:
   tests when required features are supported and skips tests with unsupported
   runner features.
 - `do` requests for core local APIs: bulk, create, delete, get, get source,
-  index, count, mget, search, refresh, stats, field mapping, aliases, index
-  templates, and index create/get/delete.
+  index, count, mget, search, refresh, stats, field mapping, field caps,
+  aliases, cat plugins/templates, cluster stats, index templates, and index
+  create/get/exists/delete.
 - Assertions: `match`, `length`, `is_true`, and `is_false`.
 - Common `catch` statuses: bad request, request, missing, conflict, param, and
   regex-style catches mapped to request errors.
@@ -42,14 +43,24 @@ The current selected fixture set covers:
 - `indices.get_field_mapping/50_field_wildcards.yml`
 - `indices.get_index_template/10_basic.yml`
 - `indices.get_index_template/20_get_missing.yml`
+- `indices.exists/10_basic.yml`
 - `indices.put_index_template/10_basic.yml`
 - `indices.refresh/10_basic.yml`
 - `indices.stats/10_index.yml`
+- `indices.update_aliases/30_remove_index_and_replace_with_alias.yml`
 - `mget/70_source_filtering.yml`
 - `search/10_source_filtering.yml`
 - `search/20_default_values.yml`
 - `search.aggregation/20_terms.yml`
 - `update/20_doc_upsert.yml`
+
+The tranche also pins selected upstream fixtures that are useful source anchors
+but not yet fully executable through the small runner:
+
+- `field_caps/10_basic.yml`
+- `cat.plugins/10_basic.yml`
+- `cat.templates/10_basic.yml`
+- `cluster.stats/10_basic.yml`
 
 ## Known Policy
 

@@ -13,6 +13,8 @@ user explicitly asks:
 
 - `../OpenSearch` is a checkout of Apache OpenSearch for API and test parity
   reference.
+- `../OpenSearch-Dashboards` is a checkout of OpenSearch Dashboards for
+  application-driven API gap analysis.
 - `../axon` is the target development architecture that will consume this
   server.
 - `../cqlite-server` contains the related lightweight Cassandra-compatible

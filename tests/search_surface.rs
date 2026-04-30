@@ -134,6 +134,154 @@ async fn terms_match_phrase_prefix_and_wildcard_queries_work_for_scalar_scans() 
 }
 
 #[tokio::test]
+async fn simple_query_string_and_nested_queries_support_discover_shapes() {
+    let state = ephemeral_state();
+    call(
+        &state,
+        Method::PUT,
+        "/saved/_doc/1",
+        json!({
+            "title": "Northwind sales dashboard",
+            "references": [
+                { "type": "index-pattern", "id": "orders" },
+                { "type": "visualization", "id": "sales" }
+            ]
+        }),
+    )
+    .await;
+
+    let simple = call(
+        &state,
+        Method::POST,
+        "/saved/_search",
+        json!({
+            "query": {
+                "simple_query_string": {
+                    "query": "sales dashboard",
+                    "fields": ["title"]
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(simple.status, 200);
+    assert_eq!(simple.body.unwrap()["hits"]["total"]["value"], 1);
+
+    let nested = call(
+        &state,
+        Method::POST,
+        "/saved/_search",
+        json!({
+            "query": {
+                "nested": {
+                    "path": "references",
+                    "query": {
+                        "bool": {
+                            "filter": [
+                                { "term": { "type": "index-pattern" } },
+                                { "term": { "id": "orders" } }
+                            ]
+                        }
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(nested.status, 200);
+    assert_eq!(nested.body.unwrap()["hits"]["total"]["value"], 1);
+
+    let path_prefixed_nested = call(
+        &state,
+        Method::POST,
+        "/saved/_search",
+        json!({
+            "query": {
+                "nested": {
+                    "path": "references",
+                    "query": {
+                        "bool": {
+                            "filter": [
+                                { "term": { "references.type": "index-pattern" } },
+                                { "term": { "references.id": "orders" } }
+                            ]
+                        }
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(path_prefixed_nested.status, 200);
+    assert_eq!(
+        path_prefixed_nested.body.unwrap()["hits"]["total"]["value"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn search_guardrails_reject_expensive_requests_before_scan() {
+    let state = ephemeral_state();
+    call(
+        &state,
+        Method::PUT,
+        "/guarded/_doc/1",
+        json!({ "status": "paid" }),
+    )
+    .await;
+
+    let terms = (0..4097).map(|value| json!(value)).collect::<Vec<_>>();
+    let too_many_terms = call(
+        &state,
+        Method::POST,
+        "/guarded/_search",
+        json!({ "query": { "terms": { "status": terms } } }),
+    )
+    .await;
+    assert_eq!(too_many_terms.status, 400);
+    assert_eq!(
+        too_many_terms.body.unwrap()["error"]["type"],
+        "x_content_parse_exception"
+    );
+
+    let too_deep = call(
+        &state,
+        Method::POST,
+        "/guarded/_search",
+        deeply_nested_bool(33),
+    )
+    .await;
+    assert_eq!(too_deep.status, 400);
+    assert_eq!(
+        too_deep.body.unwrap()["error"]["type"],
+        "x_content_parse_exception"
+    );
+
+    let msearch = ndjson_call(
+        &state,
+        Method::POST,
+        "/guarded/_msearch",
+        r#"{}
+{"from":10000,"size":1,"query":{"match_all":{}}}
+"#,
+    )
+    .await;
+    assert_eq!(msearch.status, 200);
+    assert_eq!(
+        msearch.body.unwrap()["responses"][0]["error"]["type"],
+        "illegal_argument_exception"
+    );
+}
+
+fn deeply_nested_bool(depth: usize) -> serde_json::Value {
+    let mut query = json!({ "match_all": {} });
+    for _ in 0..depth {
+        query = json!({ "bool": { "filter": query } });
+    }
+    json!({ "query": query })
+}
+
+#[tokio::test]
 async fn basic_metric_and_terms_aggregations_are_returned() {
     let state = ephemeral_state();
     for (id, status, total) in [
@@ -178,4 +326,41 @@ async fn basic_metric_and_terms_aggregations_are_returned() {
     assert_eq!(body["aggregations"]["total_stats"]["count"], 3);
     assert_eq!(body["aggregations"]["total_stats"]["sum"], 110.0);
     assert_eq!(body["aggregations"]["avg_total"]["value"], 110.0 / 3.0);
+}
+
+#[tokio::test]
+async fn search_with_aggregations_still_honors_hit_pagination() {
+    let state = ephemeral_state();
+    for id in ["1", "2", "3"] {
+        call(
+            &state,
+            Method::PUT,
+            &format!("/orders/_doc/{id}"),
+            json!({ "status": "paid" }),
+        )
+        .await;
+    }
+
+    let response = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({
+            "from": 1,
+            "size": 1,
+            "query": { "match_all": {} },
+            "aggs": {
+                "by_status": { "terms": { "field": "status" } }
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(response.status, 200);
+    let body = response.body.unwrap();
+    assert_eq!(body["hits"]["hits"][0]["_id"], "2");
+    assert_eq!(
+        body["aggregations"]["by_status"]["buckets"][0]["doc_count"],
+        3
+    );
 }

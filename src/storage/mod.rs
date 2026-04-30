@@ -226,7 +226,7 @@ impl Store {
         self.commit_mutations(vec![mutation])
     }
 
-    fn commit_mutations(&self, mutations: Vec<Mutation>) -> StoreResult<()> {
+    pub(crate) fn commit_mutations(&self, mutations: Vec<Mutation>) -> StoreResult<()> {
         if mutations.is_empty() {
             return Ok(());
         }
@@ -689,6 +689,14 @@ impl Store {
                     ));
                 }
             }
+            Mutation::DeleteIndex { name } => {
+                if !db.indexes.contains_key(name) {
+                    return Err(not_found(
+                        "index_not_found_exception",
+                        format!("no such index [{name}]"),
+                    ));
+                }
+            }
             Mutation::PutTemplate {
                 name,
                 index_patterns,
@@ -706,6 +714,14 @@ impl Store {
                         400,
                         "invalid_index_template_exception",
                         "index template requires at least one index pattern",
+                    ));
+                }
+            }
+            Mutation::DeleteTemplate { name } => {
+                if !db.templates.contains_key(name) {
+                    return Err(not_found(
+                        "index_template_missing_exception",
+                        format!("index template [{name}] missing"),
                     ));
                 }
             }
@@ -776,7 +792,13 @@ impl Store {
                     ));
                 }
             }
-            Mutation::PutAlias { alias, .. } => {
+            Mutation::PutAlias { index, alias, .. } => {
+                if !db.indexes.contains_key(index) {
+                    return Err(not_found(
+                        "index_not_found_exception",
+                        format!("no such index [{index}]"),
+                    ));
+                }
                 if alias.trim().is_empty() || alias.contains('*') {
                     return Err(StoreError::new(
                         400,
@@ -806,7 +828,6 @@ impl Store {
                     ));
                 }
             }
-            _ => {}
         }
         Ok(())
     }

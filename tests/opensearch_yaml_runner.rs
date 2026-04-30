@@ -128,6 +128,14 @@ async fn selected_upstream_yaml_rest_tests_run_against_local_router() {
             ][..],
         ),
         (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.exists/10_basic.yml",
+            &["Test indices.exists", "Test indices.exists with local flag"][..],
+        ),
+        (
+            "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.update_aliases/30_remove_index_and_replace_with_alias.yml",
+            &["Remove an index and replace it with an alias"][..],
+        ),
+        (
             "vendor/opensearch-rest-api-spec/rest-api-spec/test/search/10_source_filtering.yml",
             &[
                 "_source: true",

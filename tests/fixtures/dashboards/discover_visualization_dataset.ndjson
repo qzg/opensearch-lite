@@ -1,0 +1,8 @@
+{"index":{"_index":"orders","_id":"1"}}
+{"status":"paid","created_at":"2026-04-01T10:00:00Z","total":42.0,"quantity":1,"customer":"c1","region":"north","message":"Northwind paid order"}
+{"index":{"_index":"orders","_id":"2"}}
+{"status":"paid","created_at":"2026-04-01T12:00:00Z","total":58.0,"quantity":2,"customer":"c2","region":"north","message":"Northwind repeat order"}
+{"index":{"_index":"orders","_id":"3"}}
+{"status":"open","created_at":"2026-04-02T09:00:00Z","total":25.0,"quantity":3,"customer":"c1","region":"south","message":"South pending order"}
+{"index":{"_index":"orders","_id":"4"}}
+{"status":"refunded","created_at":"2026-04-03T09:00:00Z","total":10.0,"quantity":1,"customer":"c3","region":"south","message":"Refunded order"}

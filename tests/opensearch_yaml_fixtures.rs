@@ -88,6 +88,30 @@ const FIXTURES: &[(&str, &[&str])] = &[
         &["indices.stats:", "_shards.total", "fieldata"],
     ),
     (
+        "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.exists/10_basic.yml",
+        &["indices.exists:", "Test indices.exists"],
+    ),
+    (
+        "vendor/opensearch-rest-api-spec/rest-api-spec/test/field_caps/10_basic.yml",
+        &["field_caps:", "Get simple field caps"],
+    ),
+    (
+        "vendor/opensearch-rest-api-spec/rest-api-spec/test/cat.plugins/10_basic.yml",
+        &["cat.plugins:", "Help"],
+    ),
+    (
+        "vendor/opensearch-rest-api-spec/rest-api-spec/test/cat.templates/10_basic.yml",
+        &["cat.templates:"],
+    ),
+    (
+        "vendor/opensearch-rest-api-spec/rest-api-spec/test/cluster.stats/10_basic.yml",
+        &["cluster.stats:", "cluster_uuid"],
+    ),
+    (
+        "vendor/opensearch-rest-api-spec/rest-api-spec/test/indices.update_aliases/30_remove_index_and_replace_with_alias.yml",
+        &["remove_index:", "test_write"],
+    ),
+    (
         "vendor/opensearch-rest-api-spec/rest-api-spec/test/update/20_doc_upsert.yml",
         &["update:", "upsert:"],
     ),

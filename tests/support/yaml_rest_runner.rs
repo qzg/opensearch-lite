@@ -262,16 +262,21 @@ impl RestCall {
 
         let mut call = match api.as_str() {
             "bulk" => Self::bulk(&api, &params),
+            "cat.plugins" => Self::cat_plugins(&api, &params),
+            "cat.templates" => Self::cat_templates(&api, &params),
             "create" => Self::create(&api, &params),
             "delete" => Self::delete(&api, &params),
             "cluster.health" => Self::cluster_health(&api, &params),
+            "cluster.stats" => Self::cluster_stats(&api, &params),
             "count" => Self::count(&api, &params),
+            "field_caps" => Self::field_caps(&api, &params),
             "get" => Self::get(&api, &params),
             "get_source" => Self::get_source(&api, &params),
             "index" => Self::index(&api, &params),
             "indices.create" => Self::indices_create(&api, &params),
             "indices.delete_index_template" => Self::indices_delete_index_template(&api, &params),
             "indices.delete" => Self::indices_delete(&api, &params),
+            "indices.exists" => Self::indices_exists(&api, &params),
             "indices.exists_alias" => Self::indices_exists_alias(&api, &params),
             "indices.get" => Self::indices_get(&api, &params),
             "indices.get_alias" => Self::indices_get_alias(&api, &params),
@@ -281,6 +286,7 @@ impl RestCall {
             "indices.put_index_template" => Self::indices_put_index_template(&api, &params),
             "indices.refresh" => Self::indices_refresh(&api, &params),
             "indices.stats" => Self::indices_stats(&api, &params),
+            "indices.update_aliases" => Self::indices_update_aliases(&api, &params),
             "mget" => Self::mget(&api, &params),
             "search" => Self::search(&api, &params),
             "update" => Self::update(&api, &params),
@@ -323,6 +329,30 @@ impl RestCall {
         ))
     }
 
+    fn cat_plugins(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::GET,
+            "/_cat/plugins".to_string(),
+            query_params(params, &["format", "h", "s", "v"]),
+            Body::Empty,
+        ))
+    }
+
+    fn cat_templates(api: &str, params: &YamlMap) -> Result<Self, String> {
+        let name = path_list(params.get(yaml_key("name")));
+        Ok(Self::new(
+            api,
+            Method::GET,
+            match name {
+                Some(name) => format!("/_cat/templates/{name}"),
+                None => "/_cat/templates".to_string(),
+            },
+            query_params(params, &["format", "h", "s", "v"]),
+            Body::Empty,
+        ))
+    }
+
     fn create(api: &str, params: &YamlMap) -> Result<Self, String> {
         Ok(Self::new(
             api,
@@ -361,6 +391,16 @@ impl RestCall {
         ))
     }
 
+    fn cluster_stats(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::GET,
+            "/_cluster/stats".to_string(),
+            query_params(params, &["timeout"]),
+            Body::Empty,
+        ))
+    }
+
     fn count(api: &str, params: &YamlMap) -> Result<Self, String> {
         let index = path_list(params.get(yaml_key("index")));
         Ok(Self::new(
@@ -368,6 +408,25 @@ impl RestCall {
             Method::POST,
             index_path(index.as_deref(), "_count"),
             Vec::new(),
+            json_body(params),
+        ))
+    }
+
+    fn field_caps(api: &str, params: &YamlMap) -> Result<Self, String> {
+        let index = path_list(params.get(yaml_key("index")));
+        Ok(Self::new(
+            api,
+            Method::POST,
+            index_path(index.as_deref(), "_field_caps"),
+            query_params(
+                params,
+                &[
+                    "fields",
+                    "ignore_unavailable",
+                    "allow_no_indices",
+                    "include_unmapped",
+                ],
+            ),
             json_body(params),
         ))
     }
@@ -432,6 +491,16 @@ impl RestCall {
             Method::DELETE,
             format!("/{}", required_path(params, "index")?),
             Vec::new(),
+            Body::Empty,
+        ))
+    }
+
+    fn indices_exists(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::HEAD,
+            format!("/{}", required_path(params, "index")?),
+            query_params(params, &["local", "ignore_unavailable", "allow_no_indices"]),
             Body::Empty,
         ))
     }
@@ -570,6 +639,16 @@ impl RestCall {
         ))
     }
 
+    fn indices_update_aliases(api: &str, params: &YamlMap) -> Result<Self, String> {
+        Ok(Self::new(
+            api,
+            Method::POST,
+            "/_aliases".to_string(),
+            Vec::new(),
+            Body::Json(required_json(params, "body")?),
+        ))
+    }
+
     fn mget(api: &str, params: &YamlMap) -> Result<Self, String> {
         let index = path_list(params.get(yaml_key("index")));
         Ok(Self::new(
@@ -651,6 +730,10 @@ fn assert_response_status(call: &RestCall, response: &Response) -> Result<(), St
                 call.api, response.status, response.body
             ));
         }
+        return Ok(());
+    }
+
+    if call.method == Method::HEAD && response.status == 404 {
         return Ok(());
     }
 

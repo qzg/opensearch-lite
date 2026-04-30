@@ -58,7 +58,16 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
     if path == "/_cluster/settings" {
         return get_only(method, "cluster.get_settings", Tier::BestEffort);
     }
+    if path == "/_cluster/stats" {
+        return get_only(method, "cluster.stats", Tier::Implemented);
+    }
     if path.starts_with("/_cat/") {
+        if segments.get(1) == Some(&"plugins") {
+            return get_only(method, "cat.plugins", Tier::Implemented);
+        }
+        if segments.get(1) == Some(&"templates") {
+            return get_only(method, "cat.templates", Tier::Implemented);
+        }
         return get_only(
             method,
             if segments.get(1) == Some(&"indices") {
@@ -68,6 +77,12 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
             },
             Tier::BestEffort,
         );
+    }
+    if path == "/_field_caps" || segments.get(1) == Some(&"_field_caps") {
+        return match *method {
+            Method::GET | Method::POST => route("field_caps", Tier::Implemented, AccessClass::Read),
+            _ => unsupported_method("field_caps", method),
+        };
     }
     if path == "/_bulk" || segments.get(1) == Some(&"_bulk") {
         return match *method {
@@ -229,6 +244,16 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
             _ => unsupported_method("indices.put_index_template", method),
         };
     }
+    if segments.first() == Some(&"_template") {
+        return match *method {
+            Method::DELETE if segments.len() == 2 => route(
+                "indices.delete_template",
+                Tier::Implemented,
+                AccessClass::Write,
+            ),
+            _ => unsupported_method("indices.delete_template", method),
+        };
+    }
     if segments.first() == Some(&"_alias")
         || segments.first() == Some(&"_aliases")
         || segments.get(1) == Some(&"_alias")
@@ -292,7 +317,8 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
                 let api_name = match *method {
                     Method::PUT => "indices.create",
                     Method::DELETE => "indices.delete",
-                    Method::GET | Method::HEAD => "indices.get",
+                    Method::GET => "indices.get",
+                    Method::HEAD => "indices.exists",
                     _ => unreachable!(),
                 };
                 route(

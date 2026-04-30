@@ -7,6 +7,11 @@ unauthenticated or unauthorized requests, and it is denied for security/control
 namespaces such as `_plugins/_security`, `_opendistro/_security`, `_security`,
 snapshots, and task-control APIs.
 
+First-tranche Dashboards fixture APIs are deterministic and do not use fallback:
+`indices.exists`, `field_caps`, `cat.plugins`, `cat.templates`,
+`cluster.stats`, legacy template delete, alias updates, Discover-style search,
+and the documented visualization aggregation subset.
+
 ## Configuration
 
 ```sh
@@ -68,3 +73,15 @@ responses, write intent, and invalid status values.
 Raw documents are serialized as quoted data with stable delimiters and are
 treated as untrusted. Document text must not override system or developer
 instructions.
+
+## Durable Files And Agents
+
+Coding agents with local filesystem access can inspect durable development data
+directly under `--data-dir`. `mutations.jsonl` is an append-only JSONL log with
+transaction `begin` and `commit` records; each begin record includes readable
+mutation kinds such as `create_index`, `index_document`, `update_document`, and
+`delete_document`. `snapshot.json`, when present, is materialized JSON state.
+
+This direct inspection path is for local development and synthetic/debug data.
+Agents should avoid printing arbitrary document bodies, auth material, users
+files, private keys, or token-like values while summarizing durable state.

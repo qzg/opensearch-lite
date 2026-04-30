@@ -3,8 +3,8 @@
 `opensearch-lite` is a local-only, Rust-based OpenSearch-compatible server for
 development stacks. It targets recent OpenSearch 3.x client behavior while using
 small, readable local storage and deterministic local implementations for core
-index, document, bulk, count, multi-get, multi-search, and scalar search
-workflows.
+index, document, bulk, count, multi-get, multi-search, field discovery,
+Discover-style search, and first-tranche visualization aggregation workflows.
 
 It is not a production OpenSearch replacement. Distributed cluster behavior,
 Lucene scoring parity, security plugins, and production fault tolerance are out
@@ -38,6 +38,11 @@ curl -X POST http://127.0.0.1:9200/orders/_count -H 'content-type: application/j
 - `--ephemeral` keeps state in memory for disposable runs.
 - Strict compatibility mode can fail best-effort and fallback responses during
   CI or migration checks.
+
+The durable files are intentionally agent-readable for local development:
+`mutations.jsonl` records committed mutation intent, and `snapshot.json`
+contains materialized state when present. Treat them as local data files because
+they can contain indexed document content.
 
 ## Secured Workgroup Start
 
@@ -74,6 +79,18 @@ HTTPS/auth server and prove CA-trusted client connectivity.
 Selected upstream REST YAML fixtures run through
 `cargo test --test opensearch_yaml_runner`; see `docs/yaml-parity.md` for the
 current fixture set and runner policy.
+Dashboards-shaped fixture coverage for data-view setup, Discover search, simple
+visualization aggregations, and direct durable-file inspection is covered by:
+
+```sh
+cargo test --test dashboards_workflow_surface
+cargo test --test dashboards_metadata_surface
+cargo test --test dashboards_aggregation_surface
+cargo test --test durable_agent_read_surface
+```
+
+That is fixture-level compatibility, not a live OpenSearch Dashboards support
+claim.
 
 The parity smoke can also target an existing OpenSearch 3.x endpoint with
 `OPENSEARCH_URL=http://127.0.0.1:9200`.
@@ -93,3 +110,4 @@ documents relevant to the request. See [docs/agent-fallback.md](docs/agent-fallb
 - [Agent fallback](docs/agent-fallback.md)
 - [Driver examples](docs/driver-examples.md)
 - [Migration guidance](docs/migration.md)
+- [OpenSearch Dashboards gap analysis](docs/opensearch-dashboards-gap-analysis.md)

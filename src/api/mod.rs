@@ -7,12 +7,15 @@ pub mod indices;
 pub mod search;
 pub mod templates;
 
+use std::collections::BTreeSet;
+
 use http::Method;
 use serde_json::{json, Value};
 
 use crate::{
     agent::{validation::failure_response, AgentRequestContext},
     api_spec::{self, Tier},
+    catalog::field_caps::{field_caps_response, FieldCapsRequest},
     http::request::Request,
     responses::{acknowledged, best_effort, info, logging, open_search_error, Response},
     search::{self as search_engine, dsl::SearchRequest},
@@ -82,6 +85,18 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     if request.path == "/_msearch" || parts.get(1) == Some(&"_msearch") {
         return handle_msearch(&state, &request, parts.first().copied());
     }
+    if request.path == "/_field_caps" || parts.get(1) == Some(&"_field_caps") {
+        return handle_field_caps(&state, &request, parts.first().copied());
+    }
+    if request.path == "/_cluster/stats" {
+        return handle_cluster_stats(&state);
+    }
+    if parts.first() == Some(&"_cat") && parts.get(1) == Some(&"plugins") {
+        return Response::json(200, json!([]));
+    }
+    if parts.first() == Some(&"_cat") && parts.get(1) == Some(&"templates") {
+        return Response::json(200, json!([]));
+    }
     if parts.first() == Some(&"_stats") || parts.get(1) == Some(&"_stats") {
         return handle_stats(&state, &parts);
     }
@@ -101,6 +116,9 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     }
     if parts.first() == Some(&"_index_template") {
         return handle_template(&state, &request, parts.get(1).copied()).await;
+    }
+    if parts.first() == Some(&"_template") {
+        return handle_legacy_template(&state, &request, parts.get(1).copied()).await;
     }
     if parts.first() == Some(&"_alias")
         || parts.first() == Some(&"_aliases")
@@ -466,6 +484,73 @@ async fn handle_settings(state: &AppState, request: &Request, first: Option<&str
     }
 }
 
+fn handle_field_caps(state: &AppState, request: &Request, first: Option<&str>) -> Response {
+    let path_index = first.filter(|index| *index != "_field_caps");
+    if !request.body.is_empty() {
+        let body = match request.body_json() {
+            Ok(body) => body,
+            Err(error) => return parse_error(error),
+        };
+        if body
+            .as_object()
+            .map(|object| !object.is_empty())
+            .unwrap_or(true)
+        {
+            return open_search_error(
+                400,
+                "x_content_parse_exception",
+                "field_caps request body is not supported by OpenSearch Lite yet",
+                Some("Move field selection to the fields query parameter, or retry without index_filter."),
+            );
+        }
+    }
+    let fields = match comma_query_values(request.query_value("fields")) {
+        Some(fields) if !fields.is_empty() => fields,
+        _ => return parse_error("field_caps requires non-empty [fields]".to_string()),
+    };
+    let indices = path_indices(path_index, "_field_caps");
+    let field_caps_request = FieldCapsRequest {
+        indices,
+        fields,
+        ignore_unavailable: bool_query(request.query_value("ignore_unavailable")),
+        allow_no_indices: bool_query(request.query_value("allow_no_indices")),
+    };
+    match state
+        .store
+        .read_database(|db| field_caps_response(db, field_caps_request))
+    {
+        Ok(Ok(body)) => Response::json(200, body),
+        Ok(Err(error)) | Err(error) => store_error(error),
+    }
+}
+
+fn handle_cluster_stats(state: &AppState) -> Response {
+    match state.store.read_database(cluster_stats_response) {
+        Ok(body) => Response::json(200, body),
+        Err(error) => store_error(error),
+    }
+}
+
+async fn handle_legacy_template(
+    _state: &AppState,
+    request: &Request,
+    name: Option<&str>,
+) -> Response {
+    match request.method {
+        Method::DELETE => {
+            let Some(name) = name else {
+                return parse_error("template name is required".to_string());
+            };
+            store_error(StoreError::new(
+                404,
+                "index_template_missing_exception",
+                format!("index template [{name}] missing"),
+            ))
+        }
+        _ => unsupported("indices.delete_template"),
+    }
+}
+
 fn catalog_subset(state: &AppState, path_index: Option<&str>, key: &str) -> Response {
     let db = state.store.database();
     let mut output = serde_json::Map::new();
@@ -522,7 +607,9 @@ async fn handle_alias(state: &AppState, request: &Request, parts: &[&str]) -> Re
             }
             Err(error) => parse_error(error),
         },
-        (Method::POST, ["_aliases"]) => handle_alias_actions(state, request).await,
+        (Method::POST, ["_alias"]) | (Method::POST, ["_aliases"]) => {
+            handle_alias_actions(state, request).await
+        }
         (Method::HEAD, ["_alias", alias]) => alias_exists_response(state, None, alias),
         (Method::HEAD, [index, "_alias", alias]) => {
             alias_exists_response(state, Some(index), alias)
@@ -560,61 +647,134 @@ async fn handle_alias_actions(state: &AppState, request: &Request) -> Response {
         Ok(body) => body,
         Err(error) => return parse_error(error),
     };
-    let actions = body
-        .get("actions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let Some(actions) = body.get("actions").and_then(Value::as_array).cloned() else {
+        return parse_error("alias actions must be an array".to_string());
+    };
+    let mut delete_index_names = BTreeSet::new();
+    let mut mutations = Vec::new();
     for action in actions {
         let Some(action) = action.as_object() else {
             return parse_error("alias action must be an object".to_string());
         };
+        if action.len() != 1 {
+            return parse_error(
+                "alias action must contain exactly one add, remove, or remove_index operation"
+                    .to_string(),
+            );
+        }
         let Some((kind, meta)) = action.iter().next() else {
-            return parse_error("alias action must contain add or remove".to_string());
+            return parse_error(
+                "alias action must contain add, remove, or remove_index".to_string(),
+            );
         };
         let Some(meta) = meta.as_object() else {
             return parse_error("alias action metadata must be an object".to_string());
         };
-        let index = meta
-            .get("index")
-            .or_else(|| meta.get("indices").and_then(Value::as_array)?.first())
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let alias = meta
-            .get("alias")
-            .or_else(|| meta.get("aliases").and_then(Value::as_array)?.first())
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if index.is_empty() || alias.is_empty() {
-            return parse_error("alias action requires index and alias".to_string());
-        }
-        let index = index.to_string();
-        let alias = alias.to_string();
-        let result = match kind.as_str() {
+        let indices = action_values(meta.get("index"), meta.get("indices"));
+        let aliases = action_values(meta.get("alias"), meta.get("aliases"));
+        match kind.as_str() {
             "add" => {
+                if indices.is_empty() || aliases.is_empty() {
+                    return parse_error("alias add action requires index and alias".to_string());
+                }
                 let raw = normalize_alias_metadata(Value::Object(meta.clone()));
-                run_store(state.store.clone(), move |store| {
-                    store.put_alias(&index, &alias, raw)
-                })
-                .await
+                for index in &indices {
+                    for alias in &aliases {
+                        mutations.push(Mutation::PutAlias {
+                            index: index.clone(),
+                            alias: alias.clone(),
+                            raw: raw.clone(),
+                        });
+                    }
+                }
             }
             "remove" => {
-                run_store(state.store.clone(), move |store| {
-                    store.delete_alias(&index, &alias)
-                })
-                .await
+                if indices.is_empty() || aliases.is_empty() {
+                    return parse_error("alias remove action requires index and alias".to_string());
+                }
+                for index in &indices {
+                    for alias in &aliases {
+                        mutations.push(Mutation::DeleteAlias {
+                            index: index.clone(),
+                            alias: alias.clone(),
+                        });
+                    }
+                }
             }
-            other => Err(StoreError::new(
-                400,
-                "illegal_argument_exception",
-                format!("unsupported alias action [{other}]"),
-            )),
-        };
-        if let Err(error) = result {
-            return store_error(error);
+            "remove_index" => {
+                if indices.is_empty() {
+                    return parse_error("alias remove_index action requires index".to_string());
+                }
+                for index in &indices {
+                    delete_index_names.insert(index.clone());
+                    mutations.push(Mutation::DeleteIndex {
+                        name: index.clone(),
+                    });
+                }
+            }
+            other => {
+                return store_error(StoreError::new(
+                    400,
+                    "illegal_argument_exception",
+                    format!("unsupported alias action [{other}]"),
+                ));
+            }
+        }
+    }
+    let mutations = order_alias_mutations(mutations, &delete_index_names);
+    if !mutations.is_empty() {
+        match run_store(state.store.clone(), move |store| {
+            store.commit_mutations(mutations)
+        })
+        .await
+        {
+            Ok(()) => {}
+            Err(error) => return store_error(error),
         }
     }
     acknowledged(true)
+}
+
+fn order_alias_mutations(
+    mutations: Vec<Mutation>,
+    delete_index_names: &BTreeSet<String>,
+) -> Vec<Mutation> {
+    let mut emitted_deletes = BTreeSet::new();
+    let mut ordered = Vec::new();
+    for mutation in mutations {
+        match &mutation {
+            Mutation::PutAlias { alias, .. } if delete_index_names.contains(alias) => {
+                if emitted_deletes.insert(alias.clone()) {
+                    ordered.push(Mutation::DeleteIndex {
+                        name: alias.clone(),
+                    });
+                }
+                ordered.push(mutation);
+            }
+            Mutation::DeleteIndex { name } => {
+                if emitted_deletes.insert(name.clone()) {
+                    ordered.push(mutation);
+                }
+            }
+            _ => ordered.push(mutation),
+        }
+    }
+    ordered
+}
+
+fn action_values(one: Option<&Value>, many: Option<&Value>) -> Vec<String> {
+    one.and_then(Value::as_str)
+        .map(|value| vec![value.to_string()])
+        .or_else(|| {
+            many.and_then(Value::as_array).map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+        })
+        .unwrap_or_default()
 }
 
 fn alias_response(state: &AppState, index: Option<&str>, alias: Option<&str>) -> Response {
@@ -1241,6 +1401,14 @@ async fn handle_bulk(state: &AppState, request: &Request, path_index: Option<&st
 }
 
 fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) -> Response {
+    if let Err(error) = search_engine::limits::validate_body_bytes(request.body.len()) {
+        return open_search_error(
+            413,
+            "content_too_long_exception",
+            error,
+            Some("Reduce the search request size."),
+        );
+    }
     let mut body = match request.body_json() {
         Ok(body) => body,
         Err(error) => return parse_error(error),
@@ -1250,12 +1418,20 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
     }
     let from = numeric_param(&body, &request.query, "from", 0);
     let size = numeric_param(&body, &request.query, "size", 10);
-    if from.saturating_add(size) > state.config.max_result_window {
+    if let Err(error) = search_engine::limits::validate_request(
+        &body,
+        from,
+        size,
+        search_engine::limits::SearchLimits {
+            max_result_window: state.config.max_result_window,
+        },
+    ) {
+        let error_type = search_validation_error_type(&error);
         return open_search_error(
             400,
-            "illegal_argument_exception",
-            "from + size exceeds max result window",
-            Some("Use a smaller page for OpenSearch Lite or raise --max-result-window."),
+            error_type,
+            error,
+            Some("Use a narrower query for OpenSearch Lite or raise the relevant local limit."),
         );
     }
     let indices = path_indices(path_index, "_search");
@@ -1303,10 +1479,34 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
 }
 
 fn handle_count(state: &AppState, request: &Request, path_index: Option<&str>) -> Response {
+    if let Err(error) = search_engine::limits::validate_body_bytes(request.body.len()) {
+        return open_search_error(
+            413,
+            "content_too_long_exception",
+            error,
+            Some("Reduce the count request size."),
+        );
+    }
     let body = match request.body_json() {
         Ok(body) => body,
         Err(error) => return parse_error(error),
     };
+    if let Err(error) = search_engine::limits::validate_request(
+        &body,
+        0,
+        0,
+        search_engine::limits::SearchLimits {
+            max_result_window: state.config.max_result_window,
+        },
+    ) {
+        let error_type = search_validation_error_type(&error);
+        return open_search_error(
+            400,
+            error_type,
+            error,
+            Some("Use a narrower query for OpenSearch Lite."),
+        );
+    }
     let indices = path_indices(path_index, "_count");
     match state
         .store
@@ -1388,6 +1588,14 @@ fn handle_refresh(state: &AppState, path_index: Option<&str>) -> Response {
 }
 
 fn handle_msearch(state: &AppState, request: &Request, path_index: Option<&str>) -> Response {
+    if let Err(error) = search_engine::limits::validate_body_bytes(request.body.len()) {
+        return open_search_error(
+            413,
+            "content_too_long_exception",
+            error,
+            Some("Reduce the msearch request size."),
+        );
+    }
     let text = match std::str::from_utf8(&request.body) {
         Ok(text) => text,
         Err(error) => return parse_error(format!("msearch body must be UTF-8 NDJSON: {error}")),
@@ -1417,7 +1625,23 @@ fn handle_msearch(state: &AppState, request: &Request, path_index: Option<&str>)
             .map(|value| value as usize)
             .unwrap_or(10);
         let indices = msearch_indices(&header, path_index);
+        let validation_error = search_engine::limits::validate_request(
+            &body,
+            from,
+            size,
+            search_engine::limits::SearchLimits {
+                max_result_window: state.config.max_result_window,
+            },
+        )
+        .err();
         let response = state.store.read_database(|db| {
+            if let Some(error) = validation_error {
+                return Err(StoreError::new(
+                    400,
+                    search_validation_error_type(&error),
+                    error,
+                ));
+            }
             validate_search_indices(db, &indices).and_then(|_| {
                 search_engine::search(
                     db,
@@ -1515,6 +1739,60 @@ fn cat_indices(state: &AppState, request: &Request, api_name: &str) -> Response 
         Ok(Ok(rows)) => Response::json(200, rows).compatibility_signal(api_name, "best_effort"),
         Ok(Err(error)) | Err(error) => store_error(error),
     }
+}
+
+fn cluster_stats_response(db: &Database) -> Value {
+    let docs = db.document_count();
+    let deleted = db
+        .indexes
+        .values()
+        .map(|index| index.tombstones.len())
+        .sum::<usize>();
+    let store_bytes = db
+        .indexes
+        .values()
+        .map(|index| index.store_size_bytes)
+        .sum::<usize>();
+    let shard_count = db.indexes.values().map(index_total_shards).sum::<u64>();
+
+    json!({
+        "cluster_name": "opensearch-lite",
+        "cluster_uuid": format!("opensearch-lite-{:x}", db.indexes.len()),
+        "timestamp": 0u64,
+        "status": "green",
+        "indices": {
+            "count": db.indexes.len(),
+            "shards": {
+                "total": shard_count,
+                "primaries": db.indexes.len()
+            },
+            "docs": {
+                "count": docs,
+                "deleted": deleted
+            },
+            "store": {
+                "size_in_bytes": store_bytes,
+                "reserved_in_bytes": 0
+            }
+        },
+        "nodes": {
+            "count": {
+                "total": 1,
+                "cluster_manager": 1,
+                "data": 1,
+                "ingest": 1
+            },
+            "versions": ["opensearch-lite"],
+            "os": {},
+            "process": {},
+            "jvm": {},
+            "fs": {
+                "total_in_bytes": store_bytes,
+                "free_in_bytes": 0,
+                "available_in_bytes": 0
+            }
+        }
+    })
 }
 
 fn index_stats(db: &Database, requested: &[String], metrics: &[StatsMetric]) -> StoreResult<Value> {
@@ -2119,6 +2397,20 @@ fn path_indices(path_index: Option<&str>, suffix: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn comma_query_values(value: Option<&str>) -> Option<Vec<String>> {
+    value.map(|value| {
+        value
+            .split(',')
+            .filter(|part| !part.trim().is_empty())
+            .map(|part| part.trim().to_string())
+            .collect::<Vec<_>>()
+    })
+}
+
+fn bool_query(value: Option<&str>) -> bool {
+    matches!(value, Some("true") | Some(""))
+}
+
 fn msearch_indices(header: &Value, path_index: Option<&str>) -> Vec<String> {
     if let Some(index) = header.get("index").and_then(Value::as_str) {
         return index.split(',').map(ToString::to_string).collect();
@@ -2150,6 +2442,14 @@ fn numeric_param(body: &Value, query: &[(String, String)], key: &str, default: u
                 .map(|value| value as usize)
         })
         .unwrap_or(default)
+}
+
+fn search_validation_error_type(reason: &str) -> &'static str {
+    if reason.contains("from + size") {
+        "illegal_argument_exception"
+    } else {
+        "x_content_parse_exception"
+    }
 }
 
 fn validate_search_indices(db: &Database, indices: &[String]) -> StoreResult<()> {

@@ -132,6 +132,12 @@ fn generated_inventory_contains_access_classes() {
         .expect("missing search route");
     assert_eq!(search.access, AccessClass::Read);
 
+    let field_caps = inventory
+        .iter()
+        .find(|route| route.name == "field_caps")
+        .expect("missing field_caps route");
+    assert_eq!(field_caps.access, AccessClass::Read);
+
     let create_index = inventory
         .iter()
         .find(|route| route.name == "indices.create")
@@ -192,4 +198,55 @@ fn tranche_three_routes_reject_invalid_extra_segments() {
     let bad_field_mapping = classify(&Method::GET, "/orders/_mapping/field/status/extra");
     assert_eq!(bad_field_mapping.api_name, "indices.get_field_mapping");
     assert_eq!(bad_field_mapping.tier, Tier::Unsupported);
+}
+
+#[test]
+fn dashboards_metadata_routes_have_specific_read_and_write_classes() {
+    let exists = classify(&Method::HEAD, "/orders");
+    assert_eq!(exists.api_name, "indices.exists");
+    assert_eq!(exists.tier, Tier::Implemented);
+    assert_eq!(exists.access, AccessClass::Read);
+
+    for (method, path) in [
+        (Method::GET, "/_field_caps"),
+        (Method::POST, "/_field_caps"),
+        (Method::GET, "/orders/_field_caps"),
+        (Method::POST, "/orders/_field_caps"),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, "field_caps", "{method} {path}");
+        assert_eq!(route.tier, Tier::Implemented, "{method} {path}");
+        assert_eq!(route.access, AccessClass::Read, "{method} {path}");
+    }
+
+    for path in ["/_cat/plugins", "/_cat/templates", "/_cluster/stats"] {
+        let route = classify(&Method::GET, path);
+        assert_eq!(route.tier, Tier::Implemented, "{path}");
+        assert_eq!(route.access, AccessClass::Read, "{path}");
+    }
+
+    let delete_template = classify(&Method::DELETE, "/_template/legacy");
+    assert_eq!(delete_template.api_name, "indices.delete_template");
+    assert_eq!(delete_template.tier, Tier::Implemented);
+    assert_eq!(delete_template.access, AccessClass::Write);
+
+    let alias_singular = classify(&Method::POST, "/_alias");
+    assert_eq!(alias_singular.api_name, "indices.update_aliases");
+    assert_eq!(alias_singular.tier, Tier::Implemented);
+    assert_eq!(alias_singular.access, AccessClass::Write);
+}
+
+#[test]
+fn dashboards_metadata_wrong_methods_fail_closed() {
+    for (method, path, api_name) in [
+        (Method::PUT, "/_field_caps", "field_caps"),
+        (Method::POST, "/_cat/plugins", "cat.plugins"),
+        (Method::DELETE, "/_cluster/stats", "cluster.stats"),
+        (Method::GET, "/_template/legacy", "indices.delete_template"),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Unsupported, "{method} {path}");
+        assert_ne!(route.tier, Tier::AgentRead, "{method} {path}");
+    }
 }

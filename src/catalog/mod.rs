@@ -1,4 +1,5 @@
 pub mod alias;
+pub mod field_caps;
 pub mod index;
 pub mod mapping;
 pub mod settings;

@@ -178,6 +178,9 @@ fn read_only_authorization_allows_read_post_apis_and_blocks_mutations() {
         (Method::GET, "/orders/_doc/1"),
         (Method::POST, "/orders/_search"),
         (Method::POST, "/orders/_count"),
+        (Method::POST, "/orders/_field_caps"),
+        (Method::GET, "/_cluster/stats"),
+        (Method::GET, "/_cat/plugins"),
         (Method::POST, "/_mget"),
         (Method::POST, "/_msearch"),
     ] {
@@ -193,7 +196,9 @@ fn read_only_authorization_allows_read_post_apis_and_blocks_mutations() {
         (Method::PUT, "/orders/_mapping"),
         (Method::PUT, "/orders/_settings"),
         (Method::PUT, "/_index_template/orders"),
+        (Method::DELETE, "/_template/orders"),
         (Method::POST, "/_aliases"),
+        (Method::POST, "/_alias"),
     ] {
         let request = request_with_context(method.clone(), path, context.clone());
         let route = classify(&method, path);

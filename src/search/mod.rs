@@ -1,5 +1,6 @@
 pub mod dsl;
 pub mod evaluator;
+pub mod limits;
 pub mod scoring;
 pub mod sort;
 pub mod source_filter;

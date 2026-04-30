@@ -43,17 +43,63 @@ fail closed instead of reaching runtime fallback.
 Strict compatibility is evaluated after authentication and authorization.
 Security does not make best-effort or fallback routes look implemented.
 
-## Current Implemented Surface
+## Current Local Surface
 
 - Root info: `GET /`, `HEAD /`
 - Cluster health metadata: `GET /_cluster/health`
-- Selected cat metadata: `GET /_cat/indices`, `GET /_cat/health`
-- Index create/get/head/delete
-- Index templates
-- Aliases
+- Cluster stats metadata: `GET /_cluster/stats`
+- Selected cat metadata: `GET /_cat/indices`, `GET /_cat/health`,
+  `GET /_cat/plugins`, `GET /_cat/templates`
+- Index create/get/exists/delete
+- Composable index templates plus legacy template delete miss behavior
+- Aliases, including `_aliases`/`_alias` `add`, `remove`, and `remove_index`
 - Document index/create/get/head/update/delete
 - Bulk index/create/update/delete
-- Scalar search with `match_all`, `term`, `terms`, `range`, `exists`, `ids`,
-  simple `match`, and simple `bool`
+- Field capabilities from mappings and observed documents
+- Search/count/msearch with `match_all`, `bool`, `term`, `terms`, `range`,
+  `exists`, `ids`, simple `match`, `match_phrase_prefix`,
+  `simple_query_string`, and limited `nested`
+- First-tranche visualization aggregations: `terms`, `date_histogram`,
+  `histogram`, `range`, `filters`, `missing`, `value_count`, `min`, `max`,
+  `avg`, `sum`, `cardinality`, `stats`, and `top_hits`
 
 Unsupported mutating APIs are never routed to runtime fallback.
+
+## Dashboards Fixture Compatibility
+
+The current Dashboards claim is deliberately narrow: OpenSearch Lite has a
+source-traceable fixture suite for data-view setup, Discover-style searches,
+and simple visualization aggregations based on the pinned OpenSearch Dashboards
+3.7.0 source signals recorded in
+`docs/opensearch-dashboards-gap-analysis.md`.
+
+This does not yet mean a live OpenSearch Dashboards process is supported. Saved
+object migration APIs such as scroll, reindex/tasks, delete-by-query, and
+update-by-query remain follow-up work.
+
+## Query Guardrails
+
+Search-shaped APIs validate bounded local requests before scanning:
+
+- body bytes: the stricter of `--max-body-size` and 10 MiB
+- result window: `--max-result-window`
+- query depth: 32
+- query clauses: 1024
+- `terms` values: 4096
+- aggregation depth: 8
+- total requested buckets: 10000
+
+Unsupported or over-limit query and aggregation shapes return structured
+OpenSearch-shaped errors with hints so an agent caller can adjust the request.
+
+## Durable File Compatibility
+
+Durable mode writes `mutations.jsonl` and `snapshot.json` under `--data-dir`.
+The mutation log records transaction `begin`/`commit` entries with readable
+mutation `kind`, index, document ID, and selected source fields. The snapshot is
+readable JSON materialized state. Tests verify this directly with synthetic data
+so coding agents can inspect local development state without using the HTTP API.
+
+Treat these files as local development artifacts. They may contain document
+content; do not mount or expose them across trust boundaries unless that data
+exposure is acceptable.

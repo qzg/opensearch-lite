@@ -6,6 +6,7 @@ use opensearch_lite::{
     http::request::Request, http::router, responses::Response, server::AppState, Config,
 };
 use serde_json::Value;
+use std::path::Path;
 
 #[allow(dead_code)]
 pub async fn call(state: &AppState, method: Method, path: &str, body: Value) -> Response {
@@ -43,8 +44,16 @@ pub async fn ndjson_call(
     router::handle(state.clone(), request).await
 }
 
+#[allow(dead_code)]
 pub fn ephemeral_state() -> AppState {
     let mut config = Config::default();
     config.ephemeral = true;
+    AppState::new(config).unwrap()
+}
+
+#[allow(dead_code)]
+pub fn durable_state(data_dir: &Path) -> AppState {
+    let mut config = Config::default();
+    config.data_dir = data_dir.to_path_buf();
     AppState::new(config).unwrap()
 }
