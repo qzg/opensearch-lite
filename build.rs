@@ -127,6 +127,12 @@ fn is_admin_api(name: &str) -> bool {
         || (name.starts_with("tasks.") && name != "tasks.get")
         || name.starts_with("cluster.put_")
         || name.starts_with("cluster.delete_")
+        || matches!(
+            name,
+            "cluster.allocation_explain"
+                | "cluster.post_voting_config_exclusions"
+                | "cluster.reroute"
+        )
 }
 
 fn is_read_api(name: &str) -> bool {
@@ -139,6 +145,7 @@ fn is_read_api(name: &str) -> bool {
             | "exists"
             | "exists_source"
             | "search"
+            | "explain"
             | "count"
             | "field_caps"
             | "mget"
@@ -150,6 +157,8 @@ fn is_read_api(name: &str) -> bool {
             | "indices.get_mapping"
             | "indices.get_field_mapping"
             | "indices.get_settings"
+            | "indices.analyze"
+            | "indices.validate_query"
             | "indices.stats"
             | "indices.exists_index_template"
             | "indices.get_index_template"
@@ -161,6 +170,7 @@ fn is_read_api(name: &str) -> bool {
             | "nodes.stats"
             | "tasks.get"
             | "cat.indices"
+            | "ingest.simulate"
     ) || name.starts_with("cat.")
 }
 
@@ -195,9 +205,13 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
             | "indices.get_field_mapping"
             | "indices.get_settings"
             | "indices.put_settings"
+            | "indices.analyze"
+            | "indices.validate_query"
             | "indices.stats"
             | "indices.refresh"
             | "indices.delete_template"
+            | "indices.get_template"
+            | "indices.exists_template"
             | "indices.put_index_template"
             | "indices.get_index_template"
             | "indices.delete_index_template"
@@ -207,6 +221,19 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
             | "indices.update_aliases"
             | "field_caps"
             | "cluster.stats"
+            | "cluster.put_component_template"
+            | "cluster.get_component_template"
+            | "cluster.exists_component_template"
+            | "cluster.delete_component_template"
+            | "ingest.put_pipeline"
+            | "ingest.get_pipeline"
+            | "ingest.delete_pipeline"
+            | "search_pipeline.put"
+            | "search_pipeline.get"
+            | "search_pipeline.delete"
+            | "put_script"
+            | "get_script"
+            | "delete_script"
             | "tasks.get"
             | "cat.plugins"
             | "cat.templates"
@@ -221,6 +248,12 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
     {
         return "Tier::BestEffort";
     }
+    if is_mocked_api(name) {
+        return "Tier::Mocked";
+    }
+    if is_write_fallback_api(name) {
+        return "Tier::AgentWrite";
+    }
     if methods
         .iter()
         .all(|method| matches!(method.as_str(), "GET" | "HEAD"))
@@ -229,6 +262,9 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
             "count"
                 | "explain"
                 | "field_caps"
+                | "indices.analyze"
+                | "indices.validate_query"
+                | "ingest.simulate"
                 | "mget"
                 | "msearch"
                 | "msearch_template"
@@ -243,4 +279,31 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
         return "Tier::AgentRead";
     }
     "Tier::Unsupported"
+}
+
+fn is_mocked_api(name: &str) -> bool {
+    matches!(
+        name,
+        "cluster.allocation_explain"
+            | "cluster.delete_decommission_awareness"
+            | "cluster.delete_voting_config_exclusions"
+            | "cluster.delete_weighted_routing"
+            | "cluster.post_voting_config_exclusions"
+            | "cluster.put_decommission_awareness"
+            | "cluster.put_settings"
+            | "cluster.put_weighted_routing"
+            | "cluster.reroute"
+            | "delete_by_query_rethrottle"
+            | "indices.clear_cache"
+            | "indices.flush"
+            | "indices.forcemerge"
+            | "indices.open"
+            | "indices.upgrade"
+            | "reindex_rethrottle"
+            | "update_by_query_rethrottle"
+    )
+}
+
+fn is_write_fallback_api(name: &str) -> bool {
+    matches!(name, "indices.put_template")
 }

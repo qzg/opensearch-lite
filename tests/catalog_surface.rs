@@ -232,3 +232,128 @@ async fn aliases_endpoint_adds_removes_and_lists_aliases() {
     let missing = call(&state, Method::GET, "/_alias/catalog-read", Value::Null).await;
     assert_eq!(missing.status, 404);
 }
+
+#[tokio::test]
+async fn registry_apis_round_trip_readable_json_objects() {
+    let state = ephemeral_state();
+
+    let component = call(
+        &state,
+        Method::PUT,
+        "/_component_template/common-fields",
+        json!({
+            "template": {
+                "mappings": {
+                    "properties": {
+                        "status": { "type": "keyword" }
+                    }
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(component.status, 200);
+    let component = call(
+        &state,
+        Method::GET,
+        "/_component_template/common-fields",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(component.status, 200);
+    assert_eq!(
+        component.body.unwrap()["component_templates"][0]["name"],
+        "common-fields"
+    );
+
+    let ingest = call(
+        &state,
+        Method::PUT,
+        "/_ingest/pipeline/normalize",
+        json!({
+            "processors": [
+                { "set": { "field": "status", "value": "new" } }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(ingest.status, 200);
+    let ingest = call(
+        &state,
+        Method::GET,
+        "/_ingest/pipeline/normalize",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(ingest.status, 200);
+    assert_eq!(
+        ingest.body.unwrap()["normalize"]["processors"][0]["set"]["field"],
+        "status"
+    );
+
+    let search_pipeline = call(
+        &state,
+        Method::PUT,
+        "/_search/pipeline/default-search",
+        json!({
+            "request_processors": [],
+            "response_processors": []
+        }),
+    )
+    .await;
+    assert_eq!(search_pipeline.status, 200);
+    let search_pipeline = call(
+        &state,
+        Method::GET,
+        "/_search/pipeline/default-search",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(search_pipeline.status, 200);
+    assert!(search_pipeline.body.unwrap()["default-search"]["request_processors"].is_array());
+
+    let script = call(
+        &state,
+        Method::PUT,
+        "/_scripts/calc-score",
+        json!({
+            "script": {
+                "lang": "painless",
+                "source": "return params.score"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(script.status, 200);
+    let script = call(&state, Method::GET, "/_scripts/calc-score", Value::Null).await;
+    assert_eq!(script.status, 200);
+    assert_eq!(script.body.unwrap()["script"]["lang"], "painless");
+}
+
+#[tokio::test]
+async fn legacy_templates_are_separate_from_composable_templates() {
+    let state = ephemeral_state();
+
+    let composable = call(
+        &state,
+        Method::PUT,
+        "/_index_template/shared",
+        json!({
+            "index_patterns": ["shared-*"],
+            "template": { "settings": {} }
+        }),
+    )
+    .await;
+    assert_eq!(composable.status, 200);
+
+    let missing_legacy_delete =
+        call(&state, Method::DELETE, "/_template/shared", Value::Null).await;
+    assert_eq!(missing_legacy_delete.status, 404);
+
+    let composable_after = call(&state, Method::GET, "/_index_template/shared", Value::Null).await;
+    assert_eq!(composable_after.status, 200);
+    assert_eq!(
+        composable_after.body.unwrap()["index_templates"][0]["name"],
+        "shared"
+    );
+}

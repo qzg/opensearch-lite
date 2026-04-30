@@ -4,6 +4,7 @@ pub mod api_spec;
 pub mod catalog;
 pub mod config;
 pub mod http;
+pub mod resources;
 pub mod responses;
 pub mod runtime;
 pub mod search;

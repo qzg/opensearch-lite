@@ -95,6 +95,7 @@ fn fixture_database(documents: usize) -> Database {
     Database {
         indexes,
         templates: BTreeMap::new(),
+        registries: BTreeMap::new(),
         aliases: BTreeMap::new(),
         seq_no: documents as u64,
     }

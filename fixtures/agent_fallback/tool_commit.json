@@ -1,0 +1,22 @@
+{
+  "id": "tool_commit.legacy_template",
+  "family": "tool_commit",
+  "prompt_variant": "write_tools_v1",
+  "request": {
+    "method": "PUT",
+    "path": "/_template/legacy-agent",
+    "body": {
+      "index_patterns": ["agent-*"],
+      "template": {
+        "settings": {},
+        "mappings": {}
+      }
+    }
+  },
+  "expected": {
+    "status": 200,
+    "requires_tool": "commit_mutations",
+    "durable_namespace": "legacy_template",
+    "reject_success_without_commit": true
+  }
+}

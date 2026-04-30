@@ -20,6 +20,8 @@ fn route_inventory_has_required_core_entries() {
         );
     }
     assert!(inventory.iter().any(|route| route.tier == Tier::BestEffort));
+    assert!(inventory.iter().any(|route| route.tier == Tier::Mocked));
+    assert!(inventory.iter().any(|route| route.tier == Tier::AgentWrite));
     assert!(
         inventory.len() >= 160,
         "inventory should be generated from the vendored OpenSearch spec"
@@ -93,6 +95,27 @@ fn mutating_post_routes_fail_closed_and_read_routes_remain_fallback_eligible() {
     let unknown_security_post = classify(&Method::POST, "/_plugins/_security/unknown");
     assert_eq!(unknown_security_post.tier, Tier::Unsupported);
     assert_eq!(unknown_security_post.access, AccessClass::Admin);
+}
+
+#[test]
+fn known_malformed_get_shapes_fail_closed_instead_of_agent_fallback() {
+    for (path, api_name) in [
+        ("/orders/_delete_by_query/extra", "delete_by_query"),
+        ("/orders/_update_by_query/extra", "update_by_query"),
+        ("/orders/_validate/query/extra", "indices.validate_query"),
+        ("/_ingest/pipeline/pipeline-a/extra", "ingest.get_pipeline"),
+        ("/_search/pipeline/pipeline-a/extra", "search_pipeline.get"),
+        ("/_scripts/script-a/context/extra", "get_script"),
+    ] {
+        let route = classify(&Method::GET, path);
+        assert_eq!(route.api_name, api_name, "{path}");
+        assert_eq!(route.tier, Tier::Unsupported, "{path}");
+        assert_ne!(route.tier, Tier::AgentRead, "{path}");
+    }
+
+    let dangling = classify(&Method::GET, "/_dangling/abc");
+    assert_eq!(dangling.tier, Tier::Unsupported);
+    assert_eq!(dangling.access, AccessClass::Admin);
 }
 
 #[test]
@@ -229,6 +252,59 @@ fn tranche_three_routes_reject_invalid_extra_segments() {
 }
 
 #[test]
+fn core_write_routes_reject_invalid_extra_segments() {
+    for (method, path, api_name, access) in [
+        (
+            Method::POST,
+            "/orders/_bulk/extra",
+            "bulk",
+            AccessClass::Write,
+        ),
+        (
+            Method::GET,
+            "/orders/_bulk/extra",
+            "bulk",
+            AccessClass::Read,
+        ),
+        (
+            Method::PUT,
+            "/orders/_mapping/extra",
+            "indices.get_mapping",
+            AccessClass::Write,
+        ),
+        (
+            Method::PUT,
+            "/orders/_settings/extra",
+            "indices.get_settings",
+            AccessClass::Write,
+        ),
+        (
+            Method::PUT,
+            "/_index_template/template-extra/extra",
+            "indices.put_index_template",
+            AccessClass::Write,
+        ),
+        (
+            Method::PUT,
+            "/orders/_alias/orders-read/extra",
+            "indices.put_alias",
+            AccessClass::Write,
+        ),
+        (
+            Method::POST,
+            "/_aliases/extra",
+            "indices.put_alias",
+            AccessClass::Write,
+        ),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Unsupported, "{method} {path}");
+        assert_eq!(route.access, access, "{method} {path}");
+    }
+}
+
+#[test]
 fn dashboards_metadata_routes_have_specific_read_and_write_classes() {
     let exists = classify(&Method::HEAD, "/orders");
     assert_eq!(exists.api_name, "indices.exists");
@@ -296,11 +372,80 @@ fn dashboards_metadata_wrong_methods_fail_closed() {
         (Method::PUT, "/_field_caps", "field_caps"),
         (Method::POST, "/_cat/plugins", "cat.plugins"),
         (Method::DELETE, "/_cluster/stats", "cluster.stats"),
-        (Method::GET, "/_template/legacy", "indices.delete_template"),
     ] {
         let route = classify(&method, path);
         assert_eq!(route.api_name, api_name, "{method} {path}");
         assert_eq!(route.tier, Tier::Unsupported, "{method} {path}");
         assert_ne!(route.tier, Tier::AgentRead, "{method} {path}");
     }
+
+    let legacy_get = classify(&Method::GET, "/_template/legacy");
+    assert_eq!(legacy_get.api_name, "indices.get_template");
+    assert_eq!(legacy_get.tier, Tier::Implemented);
+    assert_eq!(legacy_get.access, AccessClass::Read);
+}
+
+#[test]
+fn mocked_and_write_fallback_routes_are_explicit_tiers() {
+    let cluster_settings = classify(&Method::PUT, "/_cluster/settings");
+    assert_eq!(cluster_settings.api_name, "cluster.put_settings");
+    assert_eq!(cluster_settings.tier, Tier::Mocked);
+    assert_eq!(cluster_settings.access, AccessClass::Admin);
+
+    for (method, path, api_name) in [
+        (Method::POST, "/_cluster/reroute", "cluster.reroute"),
+        (Method::POST, "/orders/_flush", "indices.flush"),
+        (Method::POST, "/orders/_forcemerge", "indices.forcemerge"),
+        (Method::POST, "/orders/_cache/clear", "indices.clear_cache"),
+        (
+            Method::POST,
+            "/_delete_by_query/opensearch-lite-task:1/_rethrottle",
+            "delete_by_query_rethrottle",
+        ),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Mocked, "{method} {path}");
+    }
+
+    for (method, path, api_name) in [
+        (Method::POST, "/orders/_close", "indices.close"),
+        (Method::PUT, "/orders/_block/write", "indices.add_block"),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Unsupported, "{method} {path}");
+    }
+
+    for (method, path, api_name) in [
+        (
+            Method::PUT,
+            "/_component_template/component-a",
+            "cluster.put_component_template",
+        ),
+        (
+            Method::PUT,
+            "/_ingest/pipeline/pipeline-a",
+            "ingest.put_pipeline",
+        ),
+        (Method::PUT, "/_scripts/script-a", "put_script"),
+        (
+            Method::PUT,
+            "/_search/pipeline/pipeline-a",
+            "search_pipeline.put",
+        ),
+        (Method::PUT, "/_scripts/script-a/search", "put_script"),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Implemented, "{method} {path}");
+    }
+
+    let legacy_template = classify(&Method::PUT, "/_template/legacy-a");
+    assert_eq!(legacy_template.api_name, "indices.put_template");
+    assert_eq!(legacy_template.tier, Tier::AgentWrite);
+
+    let painless_execute = classify(&Method::POST, "/_scripts/painless/_execute");
+    assert_eq!(painless_execute.api_name, "scripts_painless_execute");
+    assert_eq!(painless_execute.tier, Tier::Unsupported);
 }

@@ -220,6 +220,79 @@ async fn simple_query_string_and_nested_queries_support_discover_shapes() {
 }
 
 #[tokio::test]
+async fn validate_query_analyze_and_explain_are_bounded_local_scaffolds() {
+    let state = ephemeral_state();
+    call(
+        &state,
+        Method::PUT,
+        "/orders/_doc/1",
+        json!({ "status": "paid", "title": "Northwind espresso grinder" }),
+    )
+    .await;
+
+    let valid = call(
+        &state,
+        Method::POST,
+        "/orders/_validate/query?explain=true",
+        json!({ "query": { "term": { "status": "paid" } } }),
+    )
+    .await;
+    assert_eq!(valid.status, 200);
+    let body = valid.body.unwrap();
+    assert_eq!(body["valid"], true);
+    assert_eq!(body["explanations"][0]["valid"], true);
+
+    let invalid = call(
+        &state,
+        Method::POST,
+        "/orders/_validate/query",
+        deeply_nested_bool(33),
+    )
+    .await;
+    assert_eq!(invalid.status, 400);
+    assert_eq!(
+        invalid.body.unwrap()["error"]["type"],
+        "x_content_parse_exception"
+    );
+
+    let analyze = call(
+        &state,
+        Method::POST,
+        "/_analyze",
+        json!({ "analyzer": "standard", "text": "Northwind espresso" }),
+    )
+    .await;
+    assert_eq!(analyze.status, 200);
+    let tokens = analyze.body.unwrap()["tokens"].as_array().unwrap().clone();
+    assert_eq!(tokens[0]["token"], "northwind");
+    assert_eq!(tokens[1]["token"], "espresso");
+
+    let unsupported_analyzer = call(
+        &state,
+        Method::POST,
+        "/_analyze",
+        json!({ "analyzer": "custom_icu", "text": "hello" }),
+    )
+    .await;
+    assert_eq!(unsupported_analyzer.status, 400);
+
+    let explain = call(
+        &state,
+        Method::POST,
+        "/orders/_explain/1",
+        json!({ "query": { "term": { "status": "paid" } } }),
+    )
+    .await;
+    assert_eq!(explain.status, 200);
+    let body = explain.body.unwrap();
+    assert_eq!(body["matched"], true);
+    assert_eq!(
+        body["explanation"]["description"],
+        "OpenSearch Lite local evaluator match result"
+    );
+}
+
+#[tokio::test]
 async fn search_guardrails_reject_expensive_requests_before_scan() {
     let state = ephemeral_state();
     call(

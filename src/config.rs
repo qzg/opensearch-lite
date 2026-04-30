@@ -19,6 +19,8 @@ pub struct AgentConfig {
     pub response_limit_bytes: usize,
     pub allow_insecure_endpoint: bool,
     pub confidence_threshold: u8,
+    pub write_enabled: bool,
+    pub write_allowlist: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +35,8 @@ pub struct Config {
     pub max_result_window: usize,
     pub max_indexes: usize,
     pub max_documents: usize,
+    pub snapshot_write_threshold: usize,
+    pub snapshot_interval: Duration,
     pub connection_limit: usize,
     pub allow_nonlocal_listen: bool,
     pub strict_compatibility: bool,
@@ -89,6 +93,11 @@ impl Config {
                     config.agent.allow_insecure_endpoint = true;
                     continue;
                 }
+                "--agent-enable-write-fallback" => {
+                    reject_inline_value(flag, inline_value)?;
+                    config.agent.write_enabled = true;
+                    continue;
+                }
                 "--allow-insecure-non-loopback" => {
                     reject_inline_value(flag, inline_value)?;
                     config.security.allow_insecure_non_loopback = true;
@@ -113,6 +122,8 @@ impl Config {
                 | "--max-result-window"
                 | "--max-indexes"
                 | "--max-documents"
+                | "--snapshot-write-threshold"
+                | "--snapshot-interval-secs"
                 | "--connection-limit"
                 | "--strict-allowlist"
                 | "--agent-endpoint"
@@ -123,6 +134,7 @@ impl Config {
                 | "--agent-context-limit"
                 | "--agent-response-limit"
                 | "--agent-confidence-threshold"
+                | "--agent-write-allowlist"
                 | "--tls-cert-file"
                 | "--tls-key-file"
                 | "--tls-ca-file"
@@ -159,6 +171,13 @@ impl Config {
                 }
                 "--max-indexes" => config.max_indexes = parse_positive_usize(flag, &value)?,
                 "--max-documents" => config.max_documents = parse_positive_usize(flag, &value)?,
+                "--snapshot-write-threshold" => {
+                    config.snapshot_write_threshold = parse_positive_usize(flag, &value)?
+                }
+                "--snapshot-interval-secs" => {
+                    let secs = parse_positive_u64(flag, &value)?;
+                    config.snapshot_interval = Duration::from_secs(secs);
+                }
                 "--connection-limit" => {
                     config.connection_limit = parse_positive_usize(flag, &value)?
                 }
@@ -189,6 +208,13 @@ impl Config {
                         );
                     }
                     config.agent.confidence_threshold = threshold as u8;
+                }
+                "--agent-write-allowlist" => {
+                    config.agent.write_allowlist = value
+                        .split(',')
+                        .filter(|entry| !entry.trim().is_empty())
+                        .map(|entry| entry.trim().to_string())
+                        .collect();
                 }
                 "--tls-cert-file" => tls_cert_file = Some(PathBuf::from(value)),
                 "--tls-key-file" => tls_key_file = Some(PathBuf::from(value)),
@@ -235,6 +261,8 @@ impl Config {
             || self.max_result_window == 0
             || self.max_indexes == 0
             || self.max_documents == 0
+            || self.snapshot_write_threshold == 0
+            || self.snapshot_interval.is_zero()
             || self.connection_limit == 0
         {
             return Err("count limits must be positive".to_string());
@@ -266,6 +294,8 @@ impl Config {
             "  --max-result-window <count>             Maximum search from+size [default: 10000]",
             "  --max-indexes <count>                   Maximum local indexes [default: 1024]",
             "  --max-documents <count>                 Maximum stored documents [default: 1000000]",
+            "  --snapshot-write-threshold <count>      Flush snapshot after this many dirty writes [default: 1000]",
+            "  --snapshot-interval-secs <seconds>      Flush snapshot after this dirty interval [default: 600]",
             "  --connection-limit <count>              Maximum concurrent connections [default: 128]",
             "  --allow-nonlocal-listen                 Permit binding to non-loopback addresses",
             "  --allow-insecure-non-loopback           Permit non-loopback HTTP/no-auth development mode",
@@ -288,6 +318,8 @@ impl Config {
             "  --agent-response-limit <bytes>          Agent response byte limit [default: 1MiB]",
             "  --agent-confidence-threshold <1-100>    Minimum fallback confidence [default: 75]",
             "  --agent-allow-insecure-endpoint         Permit non-loopback http:// agent endpoint",
+            "  --agent-enable-write-fallback           Permit eligible write fallback routes to use agent tools",
+            "  --agent-write-allowlist <api,api>       Write fallback API names allowed when write fallback is enabled",
             "  -h, --help                              Show this help",
         ]
         .join("\n")
@@ -311,6 +343,15 @@ impl AgentConfig {
     pub fn enabled(&self) -> bool {
         self.endpoint.is_some()
     }
+
+    pub fn write_enabled_for(&self, api_name: &str) -> bool {
+        self.write_enabled
+            && self.enabled()
+            && self
+                .write_allowlist
+                .iter()
+                .any(|allowed| allowed == api_name)
+    }
 }
 
 impl Default for AgentConfig {
@@ -325,6 +366,8 @@ impl Default for AgentConfig {
             response_limit_bytes: 1024 * 1024,
             allow_insecure_endpoint: false,
             confidence_threshold: 75,
+            write_enabled: false,
+            write_allowlist: Vec::new(),
         }
     }
 }
@@ -344,6 +387,8 @@ impl Default for Config {
             max_result_window: 10_000,
             max_indexes: 1024,
             max_documents: 1_000_000,
+            snapshot_write_threshold: 1_000,
+            snapshot_interval: Duration::from_secs(600),
             connection_limit: 128,
             allow_nonlocal_listen: false,
             strict_compatibility: false,

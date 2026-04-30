@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Uri};
 use opensearch_lite::{
-    agent::{client::AgentClient, validation::AgentResponseWrapper},
+    agent::{client::AgentClient, tools::AgentToolCall, validation::AgentResponseWrapper},
     http::{request::Request, router},
     server::AppState,
     Config,
@@ -178,6 +178,95 @@ async fn strict_mode_rejects_best_effort_without_allowlist() {
 }
 
 #[tokio::test]
+async fn mocked_local_noop_routes_return_positive_compatibility_response() {
+    let state = ephemeral_state();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_cluster/settings",
+        json!({
+            "persistent": {
+                "cluster.routing.allocation.enable": "all",
+                "cluster.metadata.password": "secret"
+            }
+        }),
+    )
+    .await;
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        response
+            .headers
+            .get("x-opensearch-lite-tier")
+            .map(String::as_str),
+        Some("mocked")
+    );
+    let body = response.body.unwrap();
+    assert_eq!(body["acknowledged"], true);
+    assert_eq!(
+        body["persistent"]["cluster.metadata.password"],
+        "[REDACTED]"
+    );
+    assert_eq!(body["opensearch_lite"]["tier"], "mocked");
+    assert!(body["opensearch_lite"]["next_step"]
+        .as_str()
+        .unwrap()
+        .contains("full OpenSearch"));
+}
+
+#[tokio::test]
+async fn mocked_cluster_settings_rejects_malformed_json() {
+    let state = ephemeral_state();
+    let mut headers = HeaderMap::new();
+    headers.insert("content-type", HeaderValue::from_static("application/json"));
+
+    let response = raw_call(
+        &state,
+        Method::PUT,
+        "/_cluster/settings",
+        headers,
+        Bytes::from_static(b"{not json"),
+    )
+    .await;
+
+    assert_eq!(response.status, 400);
+    assert_eq!(response.body.unwrap()["error"]["type"], "parse_exception");
+}
+
+#[tokio::test]
+async fn mocked_cluster_settings_rejects_wrong_shape() {
+    let state = ephemeral_state();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_cluster/settings",
+        json!({ "persistent": "not-an-object" }),
+    )
+    .await;
+
+    assert_eq!(response.status, 400);
+    assert_eq!(response.body.unwrap()["error"]["type"], "parse_exception");
+}
+
+#[tokio::test]
+async fn strict_mode_rejects_mocked_without_allowlist() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.strict_compatibility = true;
+    let state = AppState::new(config).unwrap();
+
+    let response = call(&state, Method::PUT, "/_cluster/settings", json!({})).await;
+
+    assert_eq!(response.status, 501);
+    assert_eq!(
+        response.body.unwrap()["error"]["type"],
+        "opensearch_lite_strict_compatibility_exception"
+    );
+}
+
+#[tokio::test]
 async fn durable_mode_replays_committed_documents() {
     let temp = tempfile::tempdir().unwrap();
     let mut config = Config::default();
@@ -212,6 +301,7 @@ async fn configured_agent_fallback_can_answer_read_request() {
         confidence: 90,
         failure_reason: None,
         read_only: true,
+        tool_calls: Vec::new(),
     };
     let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
 
@@ -239,6 +329,7 @@ async fn mutating_post_routes_do_not_enter_agent_fallback() {
         confidence: 90,
         failure_reason: None,
         read_only: true,
+        tool_calls: Vec::new(),
     };
     let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
 
@@ -266,6 +357,7 @@ async fn known_write_routes_with_wrong_get_method_do_not_enter_agent_fallback() 
         confidence: 90,
         failure_reason: None,
         read_only: true,
+        tool_calls: Vec::new(),
     };
     let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
 
@@ -274,6 +366,464 @@ async fn known_write_routes_with_wrong_get_method_do_not_enter_agent_fallback() 
         assert_eq!(response.status, 501);
         assert_ne!(response.body.unwrap()["agent"], "answered");
     }
+}
+
+#[tokio::test]
+async fn write_agent_fallback_requires_explicit_enablement_and_allowlist() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers: Default::default(),
+        body: json!({ "agent": "answered" }),
+        confidence: 100,
+        failure_reason: None,
+        read_only: false,
+        tool_calls: Vec::new(),
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_template/legacy-agent",
+        json!({ "index_patterns": ["agent-*"] }),
+    )
+    .await;
+
+    assert_eq!(response.status, 501);
+    assert_eq!(
+        response.body.unwrap()["error"]["type"],
+        "opensearch_lite_agent_write_fallback_disabled_exception"
+    );
+    assert!(!state
+        .store
+        .database()
+        .registries
+        .get("legacy_template")
+        .map(|registry| registry.contains_key("legacy-agent"))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn write_agent_fallback_allowlist_does_not_accept_wildcard() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    config.agent.write_enabled = true;
+    config.agent.write_allowlist = vec!["*".to_string()];
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers: Default::default(),
+        body: json!({ "acknowledged": true }),
+        confidence: 100,
+        failure_reason: None,
+        read_only: false,
+        tool_calls: vec![AgentToolCall {
+            name: "commit_mutations".to_string(),
+            arguments: json!({
+                "mutations": [{
+                    "kind": "put_registry_object",
+                    "namespace": "legacy_template",
+                    "name": "legacy-agent",
+                    "raw": { "index_patterns": ["agent-*"] }
+                }]
+            }),
+        }],
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_template/legacy-agent",
+        json!({ "index_patterns": ["agent-*"] }),
+    )
+    .await;
+
+    assert_eq!(response.status, 501);
+    assert_eq!(
+        response.body.unwrap()["error"]["type"],
+        "opensearch_lite_agent_write_fallback_disabled_exception"
+    );
+}
+
+#[tokio::test]
+async fn write_agent_fallback_commits_only_through_tool_boundary() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    config.agent.write_enabled = true;
+    config.agent.write_allowlist = vec!["indices.put_template".to_string()];
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers: Default::default(),
+        body: json!({ "acknowledged": true }),
+        confidence: 100,
+        failure_reason: None,
+        read_only: false,
+        tool_calls: vec![AgentToolCall {
+            name: "commit_mutations".to_string(),
+            arguments: json!({
+                "mutations": [{
+                    "kind": "put_registry_object",
+                    "namespace": "legacy_template",
+                    "name": "legacy-agent",
+                    "raw": {
+                        "index_patterns": ["agent-*"]
+                    }
+                }]
+            }),
+        }],
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_template/legacy-agent",
+        json!({ "index_patterns": ["agent-*"] }),
+    )
+    .await;
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body.unwrap()["acknowledged"], true);
+    assert!(state
+        .store
+        .database()
+        .registries
+        .get("legacy_template")
+        .unwrap()
+        .contains_key("legacy-agent"));
+}
+
+#[tokio::test]
+async fn write_agent_success_without_commit_is_rejected() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    config.agent.write_enabled = true;
+    config.agent.write_allowlist = vec!["indices.put_template".to_string()];
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers: Default::default(),
+        body: json!({ "acknowledged": true }),
+        confidence: 100,
+        failure_reason: None,
+        read_only: false,
+        tool_calls: Vec::new(),
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_template/legacy-agent",
+        json!({ "index_patterns": ["agent-*"] }),
+    )
+    .await;
+
+    assert_eq!(response.status, 501);
+    assert!(response.body.unwrap()["error"]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("claimed side effects"));
+    assert!(!state
+        .store
+        .database()
+        .registries
+        .get("legacy_template")
+        .map(|registry| registry.contains_key("legacy-agent"))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn write_agent_invalid_wrapper_does_not_commit_tool_call() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    config.agent.write_enabled = true;
+    config.agent.write_allowlist = vec!["indices.put_template".to_string()];
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers: Default::default(),
+        body: json!({ "acknowledged": true }),
+        confidence: 10,
+        failure_reason: Some("not confident".to_string()),
+        read_only: false,
+        tool_calls: vec![AgentToolCall {
+            name: "commit_mutations".to_string(),
+            arguments: json!({
+                "mutations": [{
+                    "kind": "put_registry_object",
+                    "namespace": "legacy_template",
+                    "name": "legacy-agent",
+                    "raw": { "index_patterns": ["agent-*"] }
+                }]
+            }),
+        }],
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_template/legacy-agent",
+        json!({ "index_patterns": ["agent-*"] }),
+    )
+    .await;
+
+    assert_eq!(response.status, 501);
+    assert!(!state
+        .store
+        .database()
+        .registries
+        .get("legacy_template")
+        .map(|registry| registry.contains_key("legacy-agent"))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn write_agent_tool_scope_must_match_request_name() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    config.agent.write_enabled = true;
+    config.agent.write_allowlist = vec!["indices.put_template".to_string()];
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers: Default::default(),
+        body: json!({ "acknowledged": true }),
+        confidence: 100,
+        failure_reason: None,
+        read_only: false,
+        tool_calls: vec![AgentToolCall {
+            name: "commit_mutations".to_string(),
+            arguments: json!({
+                "mutations": [{
+                    "kind": "put_registry_object",
+                    "namespace": "legacy_template",
+                    "name": "other-template",
+                    "raw": { "index_patterns": ["other-*"] }
+                }]
+            }),
+        }],
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_template/legacy-agent",
+        json!({ "index_patterns": ["agent-*"] }),
+    )
+    .await;
+
+    assert_eq!(response.status, 501);
+    let registry = state
+        .store
+        .database()
+        .registries
+        .get("legacy_template")
+        .cloned()
+        .unwrap_or_default();
+    assert!(!registry.contains_key("legacy-agent"));
+    assert!(!registry.contains_key("other-template"));
+}
+
+#[tokio::test]
+async fn write_agent_tool_scope_must_match_request_body() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    config.agent.write_enabled = true;
+    config.agent.write_allowlist = vec!["indices.put_template".to_string()];
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers: Default::default(),
+        body: json!({ "acknowledged": true }),
+        confidence: 100,
+        failure_reason: None,
+        read_only: false,
+        tool_calls: vec![AgentToolCall {
+            name: "commit_mutations".to_string(),
+            arguments: json!({
+                "mutations": [{
+                    "kind": "put_registry_object",
+                    "namespace": "legacy_template",
+                    "name": "legacy-agent",
+                    "raw": { "index_patterns": ["model-changed-*"] }
+                }]
+            }),
+        }],
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_template/legacy-agent",
+        json!({ "index_patterns": ["agent-*"] }),
+    )
+    .await;
+
+    assert_eq!(response.status, 501);
+    assert!(!state
+        .store
+        .database()
+        .registries
+        .get("legacy_template")
+        .map(|registry| registry.contains_key("legacy-agent"))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn write_agent_multiple_commit_calls_are_atomic() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    config.agent.write_enabled = true;
+    config.agent.write_allowlist = vec!["indices.put_template".to_string()];
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers: Default::default(),
+        body: json!({ "acknowledged": true }),
+        confidence: 100,
+        failure_reason: None,
+        read_only: false,
+        tool_calls: vec![
+            AgentToolCall {
+                name: "commit_mutations".to_string(),
+                arguments: json!({
+                    "mutations": [{
+                        "kind": "put_registry_object",
+                        "namespace": "legacy_template",
+                        "name": "legacy-agent",
+                        "raw": { "index_patterns": ["agent-*"] }
+                    }]
+                }),
+            },
+            AgentToolCall {
+                name: "commit_mutations".to_string(),
+                arguments: json!({
+                    "mutations": [{
+                        "kind": "put_registry_object",
+                        "namespace": "legacy_template",
+                        "name": "legacy-agent",
+                        "raw": { "index_patterns": ["agent-*"] }
+                    }]
+                }),
+            },
+        ],
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+
+    let response = call(
+        &state,
+        Method::PUT,
+        "/_template/legacy-agent",
+        json!({ "index_patterns": ["agent-*"] }),
+    )
+    .await;
+
+    assert_eq!(response.status, 501);
+    assert!(!state
+        .store
+        .database()
+        .registries
+        .get("legacy_template")
+        .map(|registry| registry.contains_key("legacy-agent"))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn malformed_write_agent_body_fails_before_fallback() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    config.agent.write_enabled = true;
+    config.agent.write_allowlist = vec!["indices.put_template".to_string()];
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers: Default::default(),
+        body: json!({ "acknowledged": true }),
+        confidence: 100,
+        failure_reason: None,
+        read_only: false,
+        tool_calls: vec![AgentToolCall {
+            name: "commit_mutations".to_string(),
+            arguments: json!({
+                "mutations": [{
+                    "kind": "put_registry_object",
+                    "namespace": "legacy_template",
+                    "name": "legacy-agent",
+                    "raw": { "index_patterns": ["agent-*"] }
+                }]
+            }),
+        }],
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert("content-type", HeaderValue::from_static("application/json"));
+
+    let response = raw_call(
+        &state,
+        Method::PUT,
+        "/_template/legacy-agent",
+        headers,
+        Bytes::from_static(b"{not json"),
+    )
+    .await;
+
+    assert_eq!(response.status, 400);
+    assert!(!state
+        .store
+        .database()
+        .registries
+        .get("legacy_template")
+        .map(|registry| registry.contains_key("legacy-agent"))
+        .unwrap_or(false));
+}
+
+#[tokio::test]
+async fn agent_response_headers_cannot_override_safety_headers() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
+    let mut headers = std::collections::BTreeMap::new();
+    headers.insert("x-opensearch-lite-tier".to_string(), "spoofed".to_string());
+    headers.insert("set-cookie".to_string(), "session=bad".to_string());
+    headers.insert(
+        "warning".to_string(),
+        "199 OpenSearch-Lite fallback".to_string(),
+    );
+    let wrapper = AgentResponseWrapper {
+        status: 200,
+        headers,
+        body: json!({ "agent": "answered" }),
+        confidence: 100,
+        failure_reason: None,
+        read_only: true,
+        tool_calls: Vec::new(),
+    };
+    let state = AppState::with_agent(config, AgentClient::static_response(wrapper)).unwrap();
+
+    let response = call(&state, Method::GET, "/_unknown_read_api", Value::Null).await;
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        response
+            .headers
+            .get("x-opensearch-lite-tier")
+            .map(String::as_str),
+        Some("agent_fallback_eligible")
+    );
+    assert!(!response.headers.contains_key("set-cookie"));
+    assert_eq!(
+        response.headers.get("warning").map(String::as_str),
+        Some("199 OpenSearch-Lite fallback")
+    );
 }
 
 #[tokio::test]
@@ -329,6 +879,114 @@ async fn unsupported_bulk_methods_do_not_mutate() {
         call(&state, Method::GET, "/items/_doc/1", Value::Null)
             .await
             .status,
+        404
+    );
+}
+
+#[tokio::test]
+async fn extra_segment_write_routes_fail_closed_without_mutating() {
+    let state = ephemeral_state();
+    assert_eq!(
+        call(&state, Method::PUT, "/orders", json!({})).await.status,
+        200
+    );
+
+    let bulk = bulk_call(
+        &state,
+        Method::POST,
+        "/orders/_bulk/extra",
+        r#"{"index":{"_id":"1"}}
+{"name":"bad"}
+"#,
+    )
+    .await;
+    assert_eq!(bulk.status, 501);
+    assert_eq!(
+        call(&state, Method::GET, "/orders/_doc/1", Value::Null)
+            .await
+            .status,
+        404
+    );
+
+    let mapping = call(
+        &state,
+        Method::PUT,
+        "/orders/_mapping/extra",
+        json!({ "properties": { "bad": { "type": "keyword" } } }),
+    )
+    .await;
+    assert_eq!(mapping.status, 501);
+
+    let settings = call(
+        &state,
+        Method::PUT,
+        "/orders/_settings/extra",
+        json!({ "index": { "number_of_replicas": 0 } }),
+    )
+    .await;
+    assert_eq!(settings.status, 501);
+
+    let index_template = call(
+        &state,
+        Method::PUT,
+        "/_index_template/template-extra/extra",
+        json!({ "index_patterns": ["orders-*"] }),
+    )
+    .await;
+    assert_eq!(index_template.status, 501);
+    assert_eq!(
+        call(
+            &state,
+            Method::HEAD,
+            "/_index_template/template-extra",
+            Value::Null
+        )
+        .await
+        .status,
+        404
+    );
+
+    let alias = call(
+        &state,
+        Method::PUT,
+        "/orders/_alias/orders-read/extra",
+        json!({}),
+    )
+    .await;
+    assert_eq!(alias.status, 501);
+    assert_eq!(
+        call(
+            &state,
+            Method::HEAD,
+            "/orders/_alias/orders-read",
+            Value::Null
+        )
+        .await
+        .status,
+        404
+    );
+
+    let alias_actions = call(
+        &state,
+        Method::POST,
+        "/_aliases/extra",
+        json!({
+            "actions": [
+                { "add": { "index": "orders", "alias": "orders-read" } }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(alias_actions.status, 501);
+    assert_eq!(
+        call(
+            &state,
+            Method::HEAD,
+            "/orders/_alias/orders-read",
+            Value::Null
+        )
+        .await
+        .status,
         404
     );
 }

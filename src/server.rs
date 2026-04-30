@@ -14,6 +14,7 @@ use crate::{
     agent::AgentClient,
     config::Config,
     http::{request::Request, router},
+    resources,
     responses::Response,
     runtime::RuntimeState,
     security::{self, SecurityContext, SecurityState},
@@ -32,6 +33,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: Config) -> io::Result<Self> {
         validate_state_security(&config)?;
+        resources::validate(&config)?;
         let store = Store::open(&config)?;
         let agent = AgentClient::from_config(&config.agent);
         let security = SecurityState::from_config(&config)?;
@@ -46,6 +48,7 @@ impl AppState {
 
     pub fn with_agent(config: Config, agent: AgentClient) -> io::Result<Self> {
         validate_state_security(&config)?;
+        resources::validate(&config)?;
         let store = Store::open(&config)?;
         let security = SecurityState::from_config(&config)?;
         Ok(Self {
@@ -80,6 +83,11 @@ pub async fn run(config: Config) -> io::Result<()> {
 
 pub fn validate_config(config: &Config) -> io::Result<()> {
     validate_startup_config(config)?;
+    let diagnostics = resources::validate(config)?;
+    eprintln!(
+        "opensearch-lite resource diagnostics: {}",
+        diagnostics.summary()
+    );
     security::diagnostics::validate(config)
 }
 

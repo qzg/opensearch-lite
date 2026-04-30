@@ -1,0 +1,23 @@
+{
+  "id": "catalog_registry.component_template_put",
+  "family": "catalog_registry",
+  "prompt_variant": "registry_v1",
+  "request": {
+    "method": "PUT",
+    "path": "/_component_template/common-fields",
+    "body": {
+      "template": {
+        "mappings": {
+          "properties": {
+            "status": { "type": "keyword" }
+          }
+        }
+      }
+    }
+  },
+  "expected": {
+    "status": 200,
+    "must_preserve_schema": true,
+    "durable_namespace": "component_template"
+  }
+}

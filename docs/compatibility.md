@@ -10,8 +10,14 @@ pinned API reference is OpenSearch `3.6.0`, vendored under
   document store, mutation log, or search evaluator.
 - `best_effort`: safe local metadata or status response that approximates
   single-node development behavior.
+- `mocked`: recognized API whose production behavior is immaterial in the
+  local single-node runtime, answered as a benign positive no-op with an
+  explanatory `opensearch_lite` body field.
 - `agent_fallback_eligible`: read-style request that may be answered by the
   configured runtime agent fallback.
+- `agent_write_fallback_eligible`: write-style compatibility route that can
+  only run when write-enabled agent fallback is explicitly configured and the
+  caller is authorized for the route.
 - `unsupported`: recognized or unknown behavior that should fail rather than
   fake success.
 - `outside_product_identity`: behavior that conflicts with the local-only
@@ -23,8 +29,8 @@ They add out-of-body compatibility signals such as:
 - `x-opensearch-lite-api`
 - `x-opensearch-lite-tier`
 
-Use `--strict-compatibility` to make best-effort and fallback responses fail
-unless the route appears in `--strict-allowlist`.
+Use `--strict-compatibility` to make best-effort, mocked, and fallback responses
+fail unless the route appears in `--strict-allowlist`.
 
 ## Security Compatibility
 
@@ -68,6 +74,10 @@ Security does not make best-effort or fallback routes look implemented.
 - Delete by query and narrow saved-object namespace/workspace update by query
 
 Unsupported mutating APIs are never routed to runtime fallback.
+Mocked local no-op APIs return 200-series OpenSearch-shaped responses because
+the operation has no meaningful single-node effect. Security/control,
+snapshot/restore/delete, dangling-index, and destructive filesystem-like APIs
+still fail closed.
 
 ## Dashboards Fixture Compatibility
 
@@ -98,11 +108,14 @@ OpenSearch-shaped errors with hints so an agent caller can adjust the request.
 
 ## Durable File Compatibility
 
-Durable mode writes `mutations.jsonl` and `snapshot.json` under `--data-dir`.
-The mutation log records transaction `begin`/`commit` entries with readable
-mutation `kind`, index, document ID, and selected source fields. The snapshot is
-readable JSON materialized state. Tests verify this directly with synthetic data
-so coding agents can inspect local development state without using the HTTP API.
+Durable mode writes `mutations.jsonl`, `snapshot.json`, and
+`snapshot.meta.json` under `--data-dir`. The mutation log records transaction
+`begin`/`commit` entries with readable mutation `kind`, index, document ID, and
+selected source fields. The snapshot is readable JSON materialized state, and
+the metadata file exposes generation, estimated stored bytes, index/document
+counts, registry object count, and log high-water information without parsing
+all document bodies. Snapshots are dirty-threshold based rather than rewritten
+after every write.
 
 Treat these files as local development artifacts. They may contain document
 content; do not mount or expose them across trust boundaries unless that data

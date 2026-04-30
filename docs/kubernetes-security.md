@@ -46,6 +46,13 @@ spec:
             - /run/opensearch-lite/tls/ca.crt
             - --users-file
             - /run/opensearch-lite/auth/users.json
+            - --memory-limit
+            - 384MiB
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 512Mi
           ports:
             - containerPort: 9200
           livenessProbe:
@@ -74,6 +81,16 @@ Use TCP probes for process reachability. Avoid HTTP probes with inline Basic
 credentials in manifests. For deeper validation, run `--validate-config` through
 `kubectl exec` so the command reads mounted files inside the pod.
 
+Set `--memory-limit` below the container memory limit. The flag controls the
+stored-data budget; the process still needs overhead for HTTP handling, query
+evaluation, JSON parsing, TLS, and runtime fallback. On Linux containers,
+OpenSearch Lite reads cgroup memory limits when available and fails fast if the
+configured data budget or snapshot metadata cannot fit safely. The remediation
+message is intended for humans and coding agents: increase pod/container
+memory, reduce local data, lower `--memory-limit`, use a smaller data
+directory, or move to full OpenSearch locally, server-hosted OpenSearch, or
+cloud-hosted OpenSearch.
+
 ## Operator Workflow
 
 Validate from inside the pod:
@@ -87,6 +104,7 @@ kubectl exec deploy/opensearch-lite -- \
     --tls-key-file /run/opensearch-lite/tls/tls.key \
     --tls-ca-file /run/opensearch-lite/tls/ca.crt \
     --users-file /run/opensearch-lite/auth/users.json \
+    --memory-limit 384MiB \
     --validate-config
 ```
 

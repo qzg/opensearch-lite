@@ -13,9 +13,20 @@ use http::Method;
 use serde_json::{json, Value};
 
 use crate::{
-    agent::{validation::failure_response, AgentRequestContext},
+    agent::{
+        errors::AgentError,
+        tools::{apply_tool_calls, tool_catalog, AgentWriteScope, ToolExecutionError},
+        validation::{
+            failure_response, validate_wrapper_value, validate_write_wrapper_before_tools,
+            ValidationMode,
+        },
+        AgentRequestContext,
+    },
     api_spec::{self, Tier},
-    catalog::field_caps::{field_caps_response, FieldCapsRequest},
+    catalog::{
+        field_caps::{field_caps_response, FieldCapsRequest},
+        registry,
+    },
     http::request::Request,
     responses::{acknowledged, best_effort, info, logging, open_search_error, Response},
     search::{self as search_engine, dsl::SearchRequest},
@@ -50,7 +61,9 @@ pub async fn handle_classified_request(
     match route.tier {
         Tier::Implemented => handle_implemented(state, request, route.api_name).await,
         Tier::BestEffort => handle_best_effort(state, request, route.api_name),
+        Tier::Mocked => handle_mocked(request, route.api_name),
         Tier::AgentRead => handle_agent_read(state, request, route.api_name).await,
+        Tier::AgentWrite => handle_agent_write(state, request, route.api_name).await,
         Tier::Unsupported | Tier::OutsideIdentity => unsupported(route.api_name),
     }
 }
@@ -85,18 +98,18 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
             handle_scroll(&state, &request, parts.last().copied())
         };
     }
-    if request.path == "/_bulk" || parts.get(1) == Some(&"_bulk") {
-        let path_index = if request.path == "/_bulk" {
-            None
-        } else {
-            parts.first().copied()
+    if matches!(parts.as_slice(), ["_bulk"] | [_, "_bulk"]) {
+        let path_index = match parts.as_slice() {
+            ["_bulk"] => None,
+            [index, "_bulk"] => Some(*index),
+            _ => None,
         };
         return handle_bulk(&state, &request, path_index).await;
     }
     if parts.len() == 3 && parts.get(1) == Some(&"_source") {
         return handle_source(&state, &request, parts[0], parts[2]);
     }
-    if request.path == "/_search" || parts.get(1) == Some(&"_search") {
+    if matches!(parts.as_slice(), ["_search"] | [_, "_search"]) {
         return handle_search(&state, &request, parts.first().copied());
     }
     if matches!(parts.as_slice(), [_, "_delete_by_query"]) {
@@ -105,20 +118,28 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     if matches!(parts.as_slice(), [_, "_update_by_query"]) {
         return handle_update_by_query(&state, &request, parts.first().copied()).await;
     }
-    if request.path == "/_count" || parts.get(1) == Some(&"_count") {
+    if matches!(parts.as_slice(), ["_count"] | [_, "_count"]) {
         return handle_count(&state, &request, parts.first().copied());
     }
-    if request.path == "/_mget" || parts.get(1) == Some(&"_mget") {
+    if matches!(parts.as_slice(), ["_mget"] | [_, "_mget"]) {
         return handle_mget(&state, &request, parts.first().copied());
     }
-    if request.path == "/_msearch" || parts.get(1) == Some(&"_msearch") {
+    if matches!(parts.as_slice(), ["_msearch"] | [_, "_msearch"]) {
         return handle_msearch(&state, &request, parts.first().copied());
     }
-    if request.path == "/_field_caps" || parts.get(1) == Some(&"_field_caps") {
+    if matches!(parts.as_slice(), ["_field_caps"] | [_, "_field_caps"]) {
         return handle_field_caps(&state, &request, parts.first().copied());
     }
     if request.path == "/_cluster/stats" {
         return handle_cluster_stats(&state);
+    }
+    if matches!(parts.as_slice(), ["_analyze"] | [_, "_analyze"]) {
+        return handle_analyze(&request);
+    }
+    if parts.as_slice() == ["_validate", "query"]
+        || matches!(parts.as_slice(), [_, "_validate", "query"])
+    {
+        return handle_validate_query(&state, &request, parts.first().copied());
     }
     if parts.first() == Some(&"_cat") && parts.get(1) == Some(&"plugins") {
         return Response::json(200, json!([]));
@@ -129,7 +150,7 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     if parts.first() == Some(&"_stats") || parts.get(1) == Some(&"_stats") {
         return handle_stats(&state, &parts);
     }
-    if request.path == "/_refresh" || parts.get(1) == Some(&"_refresh") {
+    if matches!(parts.as_slice(), ["_refresh"] | [_, "_refresh"]) {
         return handle_refresh(&state, parts.first().copied());
     }
     if (parts.first() == Some(&"_mapping") && parts.get(1) == Some(&"field") && parts.len() == 3)
@@ -137,17 +158,49 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     {
         return handle_field_mapping(&state, &request, &parts);
     }
-    if parts.first() == Some(&"_mapping") || parts.get(1) == Some(&"_mapping") {
+    if matches!(parts.as_slice(), ["_mapping"] | [_, "_mapping"]) {
         return handle_mapping(&state, &request, parts.first().copied()).await;
     }
-    if parts.first() == Some(&"_settings") || parts.get(1) == Some(&"_settings") {
+    if matches!(parts.as_slice(), ["_settings"] | [_, "_settings"]) {
         return handle_settings(&state, &request, parts.first().copied()).await;
     }
     if parts.first() == Some(&"_index_template") {
         return handle_template(&state, &request, parts.get(1).copied()).await;
     }
+    if parts.first() == Some(&"_component_template") {
+        return handle_component_template(&state, &request, parts.get(1).copied()).await;
+    }
     if parts.first() == Some(&"_template") {
         return handle_legacy_template(&state, &request, parts.get(1).copied()).await;
+    }
+    if matches!(
+        parts.as_slice(),
+        ["_ingest", "pipeline"] | ["_ingest", "pipeline", _]
+    ) {
+        return handle_registry_namespace(
+            &state,
+            &request,
+            registry::INGEST_PIPELINE,
+            parts.get(2).copied(),
+            "ingest.get_pipeline",
+        )
+        .await;
+    }
+    if matches!(
+        parts.as_slice(),
+        ["_search", "pipeline"] | ["_search", "pipeline", _]
+    ) {
+        return handle_registry_namespace(
+            &state,
+            &request,
+            registry::SEARCH_PIPELINE,
+            parts.get(2).copied(),
+            "search_pipeline.get",
+        )
+        .await;
+    }
+    if matches!(parts.as_slice(), ["_scripts", _] | ["_scripts", _, _]) {
+        return handle_script_registry(&state, &request, parts[1]).await;
     }
     if parts.first() == Some(&"_alias")
         || parts.first() == Some(&"_aliases")
@@ -155,6 +208,9 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
         || parts.get(1) == Some(&"_aliases")
     {
         return handle_alias(&state, &request, &parts).await;
+    }
+    if matches!(parts.as_slice(), [_, "_explain", _]) {
+        return handle_explain(&state, &request, parts[0], parts[2]);
     }
     if parts.len() >= 2 && matches!(parts[1], "_doc" | "_create" | "_update") {
         return handle_document(&state, &request, &parts).await;
@@ -212,6 +268,108 @@ fn handle_best_effort(state: AppState, request: Request, api_name: &str) -> Resp
     }
 }
 
+fn handle_mocked(request: Request, api_name: &str) -> Response {
+    logging::approximation(api_name, &request.path);
+    match api_name {
+        "cluster.allocation_explain" => Response::json(
+            200,
+            json!({
+                "index": null,
+                "shard": null,
+                "primary": null,
+                "current_state": "started",
+                "can_remain_on_current_node": "yes",
+                "can_rebalance_cluster": "no",
+                "rebalance_explanation": "OpenSearch Lite runs as a single local node; shard allocation is not modeled.",
+                "opensearch_lite": mocked_note(api_name)
+            }),
+        )
+        .compatibility_signal(api_name, "mocked"),
+        "cluster.put_settings" => {
+            let body = match request.body_json() {
+                Ok(body) => redact_secret_values(body),
+                Err(error) => return parse_error(error),
+            };
+            if !body.is_object() {
+                return parse_error("cluster settings body must be a JSON object".to_string());
+            }
+            let persistent = match body.get("persistent") {
+                Some(value) if !value.is_object() => {
+                    return parse_error(
+                        "cluster settings [persistent] must be a JSON object".to_string(),
+                    );
+                }
+                Some(value) => value.clone(),
+                None => json!({}),
+            };
+            let transient = match body.get("transient") {
+                Some(value) if !value.is_object() => {
+                    return parse_error(
+                        "cluster settings [transient] must be a JSON object".to_string(),
+                    );
+                }
+                Some(value) => value.clone(),
+                None => json!({}),
+            };
+            Response::json(
+                200,
+                json!({
+                    "acknowledged": true,
+                    "persistent": persistent,
+                    "transient": transient,
+                    "opensearch_lite": mocked_note(api_name)
+                }),
+            )
+            .compatibility_signal(api_name, "mocked")
+        }
+        "indices.clear_cache"
+        | "indices.flush"
+        | "indices.forcemerge"
+        | "indices.open"
+        | "indices.upgrade" => Response::json(
+            200,
+            json!({
+                "_shards": {
+                    "total": 1,
+                    "successful": 1,
+                    "failed": 0
+                },
+                "acknowledged": true,
+                "shards_acknowledged": true,
+                "opensearch_lite": mocked_note(api_name)
+            }),
+        )
+        .compatibility_signal(api_name, "mocked"),
+        "delete_by_query_rethrottle" | "reindex_rethrottle" | "update_by_query_rethrottle" => {
+            Response::json(
+                200,
+                json!({
+                    "nodes": {},
+                    "opensearch_lite": mocked_note(api_name)
+                }),
+            )
+            .compatibility_signal(api_name, "mocked")
+        }
+        _ => Response::json(
+            200,
+            json!({
+                "acknowledged": true,
+                "opensearch_lite": mocked_note(api_name)
+            }),
+        )
+        .compatibility_signal(api_name, "mocked"),
+    }
+}
+
+fn mocked_note(api_name: &str) -> Value {
+    json!({
+        "tier": "mocked",
+        "api": api_name,
+        "reason": "This API is a benign local no-op in OpenSearch Lite's single-node development runtime.",
+        "next_step": "If this behavior matters for your application, test against full OpenSearch locally, server-hosted OpenSearch, or cloud-hosted OpenSearch."
+    })
+}
+
 async fn handle_agent_read(state: AppState, request: Request, api_name: &str) -> Response {
     let body = if request.body.is_empty() {
         Value::Null
@@ -240,10 +398,98 @@ async fn handle_agent_read(state: AppState, request: Request, api_name: &str) ->
         api_name: api_name.to_string(),
         route_tier: "agent_fallback_eligible".to_string(),
         catalog,
+        tools: tool_catalog(api_name, false),
     };
     match state.agent.complete(context).await {
         Ok(response) => response,
         Err(error) => failure_response(error),
+    }
+}
+
+async fn handle_agent_write(state: AppState, request: Request, api_name: &str) -> Response {
+    if !state.config.agent.write_enabled_for(api_name) {
+        return write_fallback_disabled(api_name);
+    }
+    let body = if request.body.is_empty() {
+        Value::Null
+    } else {
+        match serde_json::from_slice(&request.body) {
+            Ok(body) => body,
+            Err(error) => return parse_error(error.to_string()),
+        }
+    };
+    let scope = match agent_write_scope(api_name, &request, body.clone()) {
+        Ok(scope) => scope,
+        Err(response) => return response,
+    };
+    let context_body = redact_secret_values(body);
+    let query = redact_secret_values(query_value(&request.query));
+    let catalog = match state
+        .store
+        .read_database(|db| agent_catalog_context(db, &request, api_name))
+    {
+        Ok(catalog) => catalog,
+        Err(error) => return store_error(error),
+    };
+    let context = AgentRequestContext {
+        method: request.method.as_str().to_string(),
+        path: request.path.clone(),
+        query,
+        body: context_body,
+        api_name: api_name.to_string(),
+        route_tier: "agent_write_fallback_eligible".to_string(),
+        catalog,
+        tools: tool_catalog(api_name, true),
+    };
+    let wrapper = match state.agent.complete_raw(context).await {
+        Ok(wrapper) => wrapper,
+        Err(error) => return failure_response(error),
+    };
+    if let Err(error) =
+        validate_write_wrapper_before_tools(&wrapper, state.config.agent.confidence_threshold)
+    {
+        return failure_response(error);
+    }
+    let tool_calls = wrapper.tool_calls.clone();
+    let store = state.store.clone();
+    let tool_summary =
+        match tokio::task::spawn_blocking(move || apply_tool_calls(&store, &scope, &tool_calls))
+            .await
+        {
+            Ok(Ok(summary)) => summary,
+            Ok(Err(ToolExecutionError::Agent(error))) => return failure_response(error),
+            Ok(Err(ToolExecutionError::Store(error))) => return store_error(error),
+            Err(error) => {
+                return failure_response(AgentError::new(
+                    format!("agent write tool execution failed: {error}"),
+                    "Retry the request or use a deterministic implemented API.",
+                ))
+            }
+        };
+    validate_wrapper_value(
+        wrapper,
+        state.config.agent.confidence_threshold,
+        ValidationMode::Write {
+            commit_performed: tool_summary.committed,
+        },
+    )
+    .unwrap_or_else(failure_response)
+}
+
+fn agent_write_scope(
+    api_name: &str,
+    request: &Request,
+    body: Value,
+) -> Result<AgentWriteScope, Response> {
+    match api_name {
+        "indices.put_template" => {
+            let parts = segments(&request.path);
+            match parts.as_slice() {
+                ["_template", name] => Ok(AgentWriteScope::legacy_template(*name, body)),
+                _ => Err(unsupported(api_name)),
+            }
+        }
+        _ => Err(unsupported(api_name)),
     }
 }
 
@@ -402,6 +648,63 @@ async fn handle_template(state: &AppState, request: &Request, name: Option<&str>
     }
 }
 
+async fn handle_component_template(
+    state: &AppState,
+    request: &Request,
+    name: Option<&str>,
+) -> Response {
+    match request.method {
+        Method::PUT => {
+            let Some(name) = name else {
+                return parse_error("component template name is required".to_string());
+            };
+            match request.body_json() {
+                Ok(body) => {
+                    let name = name.to_string();
+                    match run_store(state.store.clone(), move |store| {
+                        store.put_registry_object(registry::COMPONENT_TEMPLATE, &name, body)
+                    })
+                    .await
+                    {
+                        Ok(()) => acknowledged(true),
+                        Err(error) => store_error(error),
+                    }
+                }
+                Err(error) => parse_error(error),
+            }
+        }
+        Method::GET => {
+            let db = state.store.database();
+            registry::get_component_templates(&db, name)
+        }
+        Method::HEAD => {
+            let Some(name) = name else {
+                return Response::empty(400);
+            };
+            if registry_exists(&state.store.database(), registry::COMPONENT_TEMPLATE, name) {
+                Response::empty(200)
+            } else {
+                Response::empty(404)
+            }
+        }
+        Method::DELETE => {
+            let Some(name) = name else {
+                return parse_error("component template name is required".to_string());
+            };
+            let name = name.to_string();
+            match run_store(state.store.clone(), move |store| {
+                store.delete_registry_object(registry::COMPONENT_TEMPLATE, &name)
+            })
+            .await
+            {
+                Ok(()) => acknowledged(true),
+                Err(error) => store_error(error),
+            }
+        }
+        _ => unsupported("cluster.put_component_template"),
+    }
+}
+
 fn normalize_index_template_response(raw: &Value) -> Value {
     let mut raw = raw.clone();
     if let Some(pattern) = raw.get("index_patterns").and_then(Value::as_str) {
@@ -456,6 +759,36 @@ fn stringify_value(value: Value) -> Value {
         Value::Bool(value) => Value::String(value.to_string()),
         value => value,
     }
+}
+
+fn analyze_text(text: &str, analyzer: &str) -> Vec<(String, usize, usize)> {
+    if analyzer == "keyword" {
+        return if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![(text.to_string(), 0, text.len())]
+        };
+    }
+    let mut tokens = Vec::new();
+    let mut current_start = None;
+    for (offset, ch) in text.char_indices() {
+        let boundary = if analyzer == "whitespace" {
+            ch.is_whitespace()
+        } else {
+            !ch.is_alphanumeric()
+        };
+        if boundary {
+            if let Some(start) = current_start.take() {
+                tokens.push((text[start..offset].to_ascii_lowercase(), start, offset));
+            }
+        } else if current_start.is_none() {
+            current_start = Some(offset);
+        }
+    }
+    if let Some(start) = current_start {
+        tokens.push((text[start..].to_ascii_lowercase(), start, text.len()));
+    }
+    tokens
 }
 
 async fn handle_mapping(state: &AppState, request: &Request, first: Option<&str>) -> Response {
@@ -560,24 +893,324 @@ fn handle_cluster_stats(state: &AppState) -> Response {
     }
 }
 
+fn handle_validate_query(state: &AppState, request: &Request, first: Option<&str>) -> Response {
+    let body = if request.body.is_empty() {
+        json!({ "query": { "match_all": {} } })
+    } else {
+        match request.body_json() {
+            Ok(body) => body,
+            Err(error) => return parse_error(error),
+        }
+    };
+    let query = body
+        .get("query")
+        .cloned()
+        .unwrap_or_else(|| json!({ "match_all": {} }));
+    if let Err(response) = validate_query_only(state, request.body.len(), &query) {
+        return response;
+    }
+    let indices = path_indices(first, "_validate");
+    let shard_count = match state.store.read_database(|db| {
+        let names = resolve_index_patterns(db, &indices)?;
+        Ok(names
+            .iter()
+            .filter_map(|name| db.indexes.get(name))
+            .map(index_total_shards)
+            .sum::<u64>()
+            .max(1))
+    }) {
+        Ok(Ok(shards)) => shards,
+        Ok(Err(error)) | Err(error) => return store_error(error),
+    };
+    let mut body = json!({
+        "_shards": {
+            "total": shard_count,
+            "successful": shard_count,
+            "failed": 0
+        },
+        "valid": true
+    });
+    if request.query_value("explain") == Some("true") {
+        body["explanations"] = json!([{
+            "index": indices.first().cloned().unwrap_or_else(|| "_all".to_string()),
+            "valid": true,
+            "explanation": "query is valid for OpenSearch Lite's local evaluator"
+        }]);
+    }
+    Response::json(200, body)
+}
+
+fn handle_analyze(request: &Request) -> Response {
+    let body = match request.body_json() {
+        Ok(body) => body,
+        Err(error) => return parse_error(error),
+    };
+    let analyzer = body
+        .get("analyzer")
+        .or_else(|| body.get("tokenizer"))
+        .and_then(Value::as_str)
+        .unwrap_or("standard");
+    if !matches!(
+        analyzer,
+        "standard" | "default" | "simple" | "whitespace" | "keyword"
+    ) {
+        return open_search_error(
+            400,
+            "illegal_argument_exception",
+            format!("analyzer [{analyzer}] is not supported by OpenSearch Lite"),
+            Some("Use standard/default/simple/whitespace/keyword for local analysis, or test analyzer-specific behavior against full OpenSearch."),
+        );
+    }
+    let texts = match body.get("text") {
+        Some(Value::String(text)) => vec![text.as_str()],
+        Some(Value::Array(values)) => values.iter().filter_map(Value::as_str).collect(),
+        _ => {
+            return open_search_error(
+                400,
+                "action_request_validation_exception",
+                "analyze requires text",
+                Some("Provide a string or array of strings in the text field."),
+            );
+        }
+    };
+    let mut tokens = Vec::new();
+    let mut position = 0usize;
+    for text in texts {
+        for (token, start_offset, end_offset) in analyze_text(text, analyzer) {
+            tokens.push(json!({
+                "token": token,
+                "start_offset": start_offset,
+                "end_offset": end_offset,
+                "type": "word",
+                "position": position
+            }));
+            position += 1;
+        }
+    }
+    Response::json(200, json!({ "tokens": tokens }))
+}
+
+fn handle_explain(state: &AppState, request: &Request, index: &str, id: &str) -> Response {
+    let body = if request.body.is_empty() {
+        json!({ "query": { "match_all": {} } })
+    } else {
+        match request.body_json() {
+            Ok(body) => body,
+            Err(error) => return parse_error(error),
+        }
+    };
+    let query = body
+        .get("query")
+        .cloned()
+        .unwrap_or_else(|| json!({ "match_all": {} }));
+    if let Err(response) = validate_query_only(state, request.body.len(), &query) {
+        return response;
+    }
+    let result = state.store.read_database(|db| {
+        let index_name = db.resolve_index(index).ok_or_else(|| {
+            StoreError::new(
+                404,
+                "index_not_found_exception",
+                format!("no such index [{index}]"),
+            )
+        })?;
+        let document = db
+            .indexes
+            .get(&index_name)
+            .and_then(|index| index.documents.get(id))
+            .ok_or_else(|| {
+                StoreError::new(
+                    404,
+                    "document_missing_exception",
+                    format!("document [{id}] missing"),
+                )
+            })?;
+        search_engine::evaluator::document_matches(document, &query)
+            .map_err(|error| StoreError::new(400, "x_content_parse_exception", error))
+            .map(|matched| (index_name, matched))
+    });
+    match result {
+        Ok(Ok((index_name, matched))) => Response::json(
+            200,
+            json!({
+                "_index": index_name,
+                "_id": id,
+                "matched": matched,
+                "explanation": {
+                    "value": if matched { 1.0 } else { 0.0 },
+                    "description": "OpenSearch Lite local evaluator match result",
+                    "details": []
+                }
+            }),
+        ),
+        Ok(Err(error)) | Err(error) => store_error(error),
+    }
+}
+
 async fn handle_legacy_template(
-    _state: &AppState,
+    state: &AppState,
     request: &Request,
     name: Option<&str>,
 ) -> Response {
     match request.method {
+        Method::PUT => {
+            let Some(name) = name else {
+                return parse_error("template name is required".to_string());
+            };
+            match request.body_json() {
+                Ok(body) => {
+                    let name = name.to_string();
+                    match run_store(state.store.clone(), move |store| {
+                        store.put_registry_object(registry::LEGACY_TEMPLATE, &name, body)
+                    })
+                    .await
+                    {
+                        Ok(()) => acknowledged(true),
+                        Err(error) => store_error(error),
+                    }
+                }
+                Err(error) => parse_error(error),
+            }
+        }
+        Method::GET => {
+            let db = state.store.database();
+            registry::get_named_object(
+                &db,
+                registry::LEGACY_TEMPLATE,
+                name,
+                "index_template_missing_exception",
+                "legacy template",
+            )
+        }
+        Method::HEAD => {
+            let Some(name) = name else {
+                return Response::empty(400);
+            };
+            if registry_exists(&state.store.database(), registry::LEGACY_TEMPLATE, name) {
+                Response::empty(200)
+            } else {
+                Response::empty(404)
+            }
+        }
         Method::DELETE => {
             let Some(name) = name else {
                 return parse_error("template name is required".to_string());
             };
-            store_error(StoreError::new(
-                404,
-                "index_template_missing_exception",
-                format!("index template [{name}] missing"),
-            ))
+            if !registry_exists(&state.store.database(), registry::LEGACY_TEMPLATE, name) {
+                return store_error(StoreError::new(
+                    404,
+                    "index_template_missing_exception",
+                    format!("index template [{name}] missing"),
+                ));
+            }
+            let name = name.to_string();
+            match run_store(state.store.clone(), move |store| {
+                store.delete_registry_object(registry::LEGACY_TEMPLATE, &name)
+            })
+            .await
+            {
+                Ok(()) => acknowledged(true),
+                Err(error) => store_error(error),
+            }
         }
         _ => unsupported("indices.delete_template"),
     }
+}
+
+async fn handle_registry_namespace(
+    state: &AppState,
+    request: &Request,
+    namespace: &'static str,
+    name: Option<&str>,
+    read_api_name: &'static str,
+) -> Response {
+    match request.method {
+        Method::PUT => {
+            let Some(name) = name else {
+                return parse_error("registry object name is required".to_string());
+            };
+            match request.body_json() {
+                Ok(body) => {
+                    let name = name.to_string();
+                    match run_store(state.store.clone(), move |store| {
+                        store.put_registry_object(namespace, &name, body)
+                    })
+                    .await
+                    {
+                        Ok(()) => acknowledged(true),
+                        Err(error) => store_error(error),
+                    }
+                }
+                Err(error) => parse_error(error),
+            }
+        }
+        Method::GET => {
+            let db = state.store.database();
+            let (missing_type, label) = match namespace {
+                registry::INGEST_PIPELINE => ("resource_not_found_exception", "ingest pipeline"),
+                registry::SEARCH_PIPELINE => ("resource_not_found_exception", "search pipeline"),
+                _ => ("resource_not_found_exception", "registry object"),
+            };
+            registry::get_named_object(&db, namespace, name, missing_type, label)
+        }
+        Method::DELETE => {
+            let Some(name) = name else {
+                return parse_error("registry object name is required".to_string());
+            };
+            let name = name.to_string();
+            match run_store(state.store.clone(), move |store| {
+                store.delete_registry_object(namespace, &name)
+            })
+            .await
+            {
+                Ok(()) => acknowledged(true),
+                Err(error) => store_error(error),
+            }
+        }
+        _ => unsupported(read_api_name),
+    }
+}
+
+async fn handle_script_registry(state: &AppState, request: &Request, name: &str) -> Response {
+    match request.method {
+        Method::PUT | Method::POST => match request.body_json() {
+            Ok(body) => {
+                let name = name.to_string();
+                match run_store(state.store.clone(), move |store| {
+                    store.put_registry_object(registry::SCRIPT, &name, body)
+                })
+                .await
+                {
+                    Ok(()) => acknowledged(true),
+                    Err(error) => store_error(error),
+                }
+            }
+            Err(error) => parse_error(error),
+        },
+        Method::GET => {
+            let db = state.store.database();
+            registry::get_script(&db, name)
+        }
+        Method::DELETE => {
+            let name = name.to_string();
+            match run_store(state.store.clone(), move |store| {
+                store.delete_registry_object(registry::SCRIPT, &name)
+            })
+            .await
+            {
+                Ok(()) => acknowledged(true),
+                Err(error) => store_error(error),
+            }
+        }
+        _ => unsupported("put_script"),
+    }
+}
+
+fn registry_exists(db: &Database, namespace: &str, name: &str) -> bool {
+    db.registries
+        .get(namespace)
+        .map(|registry| registry.contains_key(name))
+        .unwrap_or(false)
 }
 
 fn catalog_subset(state: &AppState, path_index: Option<&str>, key: &str) -> Response {
@@ -3515,7 +4148,16 @@ fn unsupported(api_name: &str) -> Response {
         501,
         "opensearch_lite_unsupported_api_exception",
         format!("OpenSearch Lite does not implement [{api_name}] yet"),
-        Some("Use an implemented API, simplify the request, or configure read-only agent fallback for eligible read routes."),
+        Some("Use an implemented API, simplify the request, use a mocked local no-op API where safe, or configure agent fallback for eligible routes."),
+    )
+}
+
+fn write_fallback_disabled(api_name: &str) -> Response {
+    open_search_error(
+        501,
+        "opensearch_lite_agent_write_fallback_disabled_exception",
+        format!("OpenSearch Lite can only handle [{api_name}] through write-enabled agent fallback, which is not enabled"),
+        Some("Enable write fallback only for trusted local development, or use full OpenSearch locally, server-hosted OpenSearch, or cloud-hosted OpenSearch for this API family."),
     )
 }
 
@@ -3592,6 +4234,7 @@ mod tests {
         Database {
             indexes,
             templates: BTreeMap::new(),
+            registries: BTreeMap::new(),
             aliases: BTreeMap::new(),
             seq_no: 1,
         }

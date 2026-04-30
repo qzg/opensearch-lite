@@ -1,0 +1,24 @@
+{
+  "id": "query_analysis.validate_bool_filter",
+  "family": "query_analysis",
+  "prompt_variant": "query_tools_v1",
+  "request": {
+    "method": "POST",
+    "path": "/orders/_validate/query",
+    "body": {
+      "query": {
+        "bool": {
+          "filter": [
+            { "term": { "status": "paid" } },
+            { "range": { "total": { "gte": 100 } } }
+          ]
+        }
+      }
+    }
+  },
+  "expected": {
+    "status": 200,
+    "valid": true,
+    "must_not_mutate": true
+  }
+}

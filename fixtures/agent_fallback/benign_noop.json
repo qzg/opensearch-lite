@@ -1,0 +1,15 @@
+{
+  "id": "benign_noop.cluster_reroute",
+  "family": "benign_noop",
+  "prompt_variant": "mocked_v1",
+  "request": {
+    "method": "POST",
+    "path": "/_cluster/reroute",
+    "body": {}
+  },
+  "expected": {
+    "status": 200,
+    "tier": "mocked",
+    "must_not_mutate": true
+  }
+}

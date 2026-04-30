@@ -4,11 +4,16 @@ pub mod snapshot;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     fs::{self, File, OpenOptions},
     io,
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex, RwLock,
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use fs2::FileExt;
@@ -17,16 +22,22 @@ use serde_json::{json, Value};
 
 use crate::{config::Config, storage::mutation_log::Mutation};
 
+const MUTATION_LOG_SYNC_INTERVAL: Duration = Duration::from_secs(1);
+
 #[derive(Debug, Clone)]
 pub struct Store {
     inner: Arc<RwLock<Database>>,
     commit_lock: Arc<Mutex<()>>,
     snapshot_lock: Arc<Mutex<()>>,
+    snapshot_state: Arc<Mutex<SnapshotFlushState>>,
+    mutation_log_syncer: Option<Arc<MutationLogSyncer>>,
     mutation_log_path: PathBuf,
     snapshot_path: PathBuf,
+    snapshot_metadata_path: PathBuf,
     _data_lock: Option<Arc<File>>,
     ephemeral: bool,
     limits: StoreLimits,
+    snapshot_policy: SnapshotPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -36,10 +47,38 @@ struct StoreLimits {
     memory_limit_bytes: usize,
 }
 
+#[derive(Debug, Clone)]
+struct SnapshotPolicy {
+    write_threshold: usize,
+    interval: Duration,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SnapshotFlushState {
+    dirty_writes: usize,
+    dirty_since: Option<SystemTime>,
+    generation: u64,
+    last_transaction_id: Option<String>,
+}
+
+struct MutationLogSyncer {
+    state: Arc<MutationLogSyncThreadState>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+struct MutationLogSyncThreadState {
+    path: PathBuf,
+    dirty: Mutex<bool>,
+    stop: AtomicBool,
+    changed: Condvar,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Database {
     pub indexes: BTreeMap<String, IndexMetadata>,
     pub templates: BTreeMap<String, IndexTemplate>,
+    #[serde(default)]
+    pub registries: BTreeMap<String, BTreeMap<String, Value>>,
     pub aliases: BTreeMap<String, AliasMetadata>,
     pub seq_no: u64,
 }
@@ -157,6 +196,130 @@ impl PreparedOutcome {
     }
 }
 
+impl fmt::Debug for MutationLogSyncer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MutationLogSyncer")
+            .field("path", &self.state.path)
+            .finish_non_exhaustive()
+    }
+}
+
+impl MutationLogSyncer {
+    fn spawn(path: PathBuf) -> Self {
+        let state = Arc::new(MutationLogSyncThreadState {
+            path,
+            dirty: Mutex::new(false),
+            stop: AtomicBool::new(false),
+            changed: Condvar::new(),
+        });
+        let thread_state = Arc::clone(&state);
+        let handle = match thread::Builder::new()
+            .name("opensearch-lite-mutation-log-sync".to_string())
+            .spawn(move || run_mutation_log_syncer(thread_state))
+        {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                eprintln!(
+                    "opensearch-lite mutation log warning: delayed sync thread did not start: {error}"
+                );
+                None
+            }
+        };
+        Self {
+            state,
+            handle: Mutex::new(handle),
+        }
+    }
+
+    fn mark_dirty(&self) {
+        let Ok(mut dirty) = self.state.dirty.lock() else {
+            eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+            return;
+        };
+        *dirty = true;
+        self.state.changed.notify_one();
+    }
+}
+
+impl Drop for MutationLogSyncer {
+    fn drop(&mut self) {
+        self.state.stop.store(true, Ordering::SeqCst);
+        self.state.changed.notify_one();
+        if let Ok(mut handle) = self.handle.lock() {
+            if let Some(handle) = handle.take() {
+                let _ = handle.join();
+            }
+        }
+        sync_dirty_mutation_log_now(&self.state);
+    }
+}
+
+fn run_mutation_log_syncer(state: Arc<MutationLogSyncThreadState>) {
+    loop {
+        let Ok(mut dirty) = state.dirty.lock() else {
+            eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+            return;
+        };
+        while !*dirty && !state.stop.load(Ordering::SeqCst) {
+            let Ok(next_dirty) = state.changed.wait(dirty) else {
+                eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+                return;
+            };
+            dirty = next_dirty;
+        }
+        if state.stop.load(Ordering::SeqCst) {
+            return;
+        }
+        let first_dirty_at = Instant::now();
+        while !state.stop.load(Ordering::SeqCst) {
+            let elapsed = first_dirty_at.elapsed();
+            if elapsed >= MUTATION_LOG_SYNC_INTERVAL {
+                break;
+            }
+            let remaining = MUTATION_LOG_SYNC_INTERVAL - elapsed;
+            let Ok((next_dirty, _)) = state.changed.wait_timeout(dirty, remaining) else {
+                eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+                return;
+            };
+            dirty = next_dirty;
+        }
+        if state.stop.load(Ordering::SeqCst) {
+            return;
+        }
+        if !*dirty {
+            continue;
+        }
+        *dirty = false;
+        drop(dirty);
+        if let Err(error) = mutation_log::sync(&state.path) {
+            eprintln!("opensearch-lite mutation log warning: delayed sync failed: {error}");
+            if let Ok(mut dirty) = state.dirty.lock() {
+                *dirty = true;
+            }
+        }
+    }
+}
+
+fn sync_dirty_mutation_log_now(state: &MutationLogSyncThreadState) {
+    let dirty_was_set = match state.dirty.lock() {
+        Ok(mut dirty) => {
+            let was_dirty = *dirty;
+            *dirty = false;
+            was_dirty
+        }
+        Err(_) => {
+            eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+            false
+        }
+    };
+    if dirty_was_set {
+        if let Err(error) = mutation_log::sync(&state.path) {
+            eprintln!("opensearch-lite mutation log warning: final sync failed: {error}");
+        }
+    }
+}
+
 fn single_write_result(mut results: Vec<StoreResult<WriteOutcome>>) -> StoreResult<WriteOutcome> {
     results.pop().unwrap_or_else(|| {
         Err(StoreError::new(
@@ -175,10 +338,105 @@ fn internal_document_error(action: &'static str) -> StoreError {
     )
 }
 
+fn load_durable_state(
+    snapshot_path: &std::path::Path,
+    snapshot_metadata_path: &std::path::Path,
+    mutation_log_path: &std::path::Path,
+    memory_limit_bytes: usize,
+    db: &mut Database,
+) -> io::Result<SnapshotFlushState> {
+    let Some(metadata) = snapshot::read_metadata(snapshot_metadata_path)? else {
+        mutation_log::replay_validating(mutation_log_path, db, |db| {
+            validate_loaded_database_memory(db, memory_limit_bytes)
+        })?;
+        return Ok(SnapshotFlushState::default());
+    };
+    let snapshot_path = metadata
+        .snapshot_file
+        .as_deref()
+        .map(|file| {
+            snapshot_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(file)
+        })
+        .unwrap_or_else(|| snapshot_path.to_path_buf());
+    let Some(snapshot_db) = snapshot::read_snapshot(&snapshot_path)? else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "snapshot metadata {} exists but snapshot {} is missing",
+                snapshot_metadata_path.display(),
+                snapshot_path.display()
+            ),
+        ));
+    };
+    *db = snapshot_db;
+    validate_loaded_database_memory(db, memory_limit_bytes)?;
+    if metadata.log_compacted {
+        mutation_log::replay_validating(mutation_log_path, db, |db| {
+            validate_loaded_database_memory(db, memory_limit_bytes)
+        })?;
+    } else {
+        mutation_log::replay_after_validating(
+            mutation_log_path,
+            db,
+            metadata.last_transaction_id.as_deref(),
+            |db| validate_loaded_database_memory(db, memory_limit_bytes),
+        )?;
+    }
+    Ok(SnapshotFlushState {
+        dirty_writes: 0,
+        dirty_since: None,
+        generation: metadata.generation,
+        last_transaction_id: metadata.last_transaction_id,
+    })
+}
+
+fn snapshot_metadata(
+    db: &Database,
+    generation: u64,
+    snapshot_file: Option<String>,
+    last_transaction_id: Option<String>,
+    log_compacted: bool,
+) -> snapshot::SnapshotMetadata {
+    let indexes = db
+        .indexes
+        .values()
+        .map(|index| snapshot::SnapshotIndexMetadata {
+            name: index.name.clone(),
+            document_count: index.documents.len(),
+            tombstone_count: index.tombstones.len(),
+            alias_count: index.aliases.len(),
+            store_size_bytes: index.store_size_bytes,
+        })
+        .collect();
+    snapshot::SnapshotMetadata {
+        version: 1,
+        generation,
+        snapshot_file,
+        created_at_unix_millis: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default(),
+        estimated_stored_bytes: estimate_database_bytes(db),
+        index_count: db.indexes.len(),
+        document_count: db.document_count(),
+        template_count: db.templates.len(),
+        registry_object_count: db.registries.values().map(|registry| registry.len()).sum(),
+        alias_count: db.aliases.len(),
+        seq_no: db.seq_no,
+        last_transaction_id,
+        log_compacted,
+        indexes,
+    }
+}
+
 impl Store {
     pub fn open(config: &Config) -> io::Result<Self> {
         let mutation_log_path = config.data_dir.join("mutations.jsonl");
         let snapshot_path = config.data_dir.join("snapshot.json");
+        let snapshot_metadata_path = config.data_dir.join("snapshot.meta.json");
         if !config.ephemeral {
             fs::create_dir_all(&config.data_dir)?;
             set_owner_only(&config.data_dir)?;
@@ -189,21 +447,42 @@ impl Store {
             Some(Arc::new(open_data_lock(&config.data_dir)?))
         };
         let mut db = Database::default();
+        let mut snapshot_state = SnapshotFlushState::default();
         if !config.ephemeral {
-            mutation_log::replay(&mutation_log_path, &mut db)?;
+            snapshot_state = load_durable_state(
+                &snapshot_path,
+                &snapshot_metadata_path,
+                &mutation_log_path,
+                config.memory_limit_bytes,
+                &mut db,
+            )?;
+            validate_loaded_database_memory(&db, config.memory_limit_bytes)?;
         }
         Ok(Self {
             inner: Arc::new(RwLock::new(db)),
             commit_lock: Arc::new(Mutex::new(())),
             snapshot_lock: Arc::new(Mutex::new(())),
+            snapshot_state: Arc::new(Mutex::new(snapshot_state)),
+            mutation_log_syncer: if config.ephemeral {
+                None
+            } else {
+                Some(Arc::new(MutationLogSyncer::spawn(
+                    mutation_log_path.clone(),
+                )))
+            },
             mutation_log_path,
             snapshot_path,
+            snapshot_metadata_path,
             _data_lock: data_lock,
             ephemeral: config.ephemeral,
             limits: StoreLimits {
                 max_indexes: config.max_indexes,
                 max_documents: config.max_documents,
                 memory_limit_bytes: config.memory_limit_bytes,
+            },
+            snapshot_policy: SnapshotPolicy {
+                write_threshold: config.snapshot_write_threshold,
+                interval: config.snapshot_interval,
             },
         })
     }
@@ -234,23 +513,30 @@ impl Store {
         let _commit = self.commit_lock.lock().map_err(|_| {
             StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
         })?;
-        let mut db = self.inner.write().map_err(|_| {
-            StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
-        })?;
-        let before = db.clone();
-        let mut candidate = before.clone();
-        for mutation in &mutations {
-            self.validate_mutation(&candidate, mutation)?;
-            mutation.apply_to(&mut candidate);
-            self.validate_memory(&candidate)?;
+        let snapshot_work = {
+            let mut db = self.inner.write().map_err(|_| {
+                StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
+            })?;
+            let before = db.clone();
+            let mut candidate = before.clone();
+            for mutation in &mutations {
+                self.validate_mutation(&candidate, mutation)?;
+                mutation.apply_to(&mut candidate);
+                self.validate_memory(&candidate)?;
+            }
+            if !self.ephemeral {
+                let transaction_id =
+                    self.append_committed_transaction(&mut db, &before, &candidate, &mutations)?;
+                Some((candidate, transaction_id, mutations.len()))
+            } else {
+                *db = candidate;
+                None
+            }
+        };
+        if let Some((snapshot_db, transaction_id, mutation_count)) = snapshot_work {
+            self.schedule_mutation_log_sync();
+            self.after_committed_transaction(&snapshot_db, Some(transaction_id), mutation_count);
         }
-        if !self.ephemeral {
-            self.append_committed_transaction(&mut db, &before, &candidate, &mutations)?;
-        } else {
-            *db = candidate;
-        }
-        drop(db);
-        self.write_snapshot();
         Ok(())
     }
 
@@ -261,50 +547,59 @@ impl Store {
         let _commit = self.commit_lock.lock().map_err(|_| {
             StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
         })?;
-        let mut db = self.inner.write().map_err(|_| {
-            StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
-        })?;
-        let before = db.clone();
-        let mut candidate = before.clone();
-        let mut committed_mutations = Vec::new();
-        let mut results = Vec::with_capacity(operations.len());
+        let (results, snapshot_work) = {
+            let mut db = self.inner.write().map_err(|_| {
+                StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
+            })?;
+            let before = db.clone();
+            let mut candidate = before.clone();
+            let mut committed_mutations = Vec::new();
+            let mut results = Vec::with_capacity(operations.len());
 
-        for operation in operations {
-            match self
-                .prepare_write_operation(&candidate, operation)
-                .and_then(|prepared| {
-                    let mut operation_candidate = candidate.clone();
-                    for mutation in &prepared.mutations {
-                        self.validate_mutation(&operation_candidate, mutation)?;
-                        mutation.apply_to(&mut operation_candidate);
-                        self.validate_memory(&operation_candidate)?;
+            for operation in operations {
+                match self
+                    .prepare_write_operation(&candidate, operation)
+                    .and_then(|prepared| {
+                        let mut operation_candidate = candidate.clone();
+                        for mutation in &prepared.mutations {
+                            self.validate_mutation(&operation_candidate, mutation)?;
+                            mutation.apply_to(&mut operation_candidate);
+                            self.validate_memory(&operation_candidate)?;
+                        }
+                        let outcome = prepared.outcome.resolve(&operation_candidate)?;
+                        Ok((operation_candidate, prepared.mutations, outcome))
+                    }) {
+                    Ok((operation_candidate, mutations, outcome)) => {
+                        candidate = operation_candidate;
+                        committed_mutations.extend(mutations);
+                        results.push(Ok(outcome));
                     }
-                    let outcome = prepared.outcome.resolve(&operation_candidate)?;
-                    Ok((operation_candidate, prepared.mutations, outcome))
-                }) {
-                Ok((operation_candidate, mutations, outcome)) => {
-                    candidate = operation_candidate;
-                    committed_mutations.extend(mutations);
-                    results.push(Ok(outcome));
+                    Err(error) => results.push(Err(error)),
                 }
-                Err(error) => results.push(Err(error)),
             }
-        }
-        if !committed_mutations.is_empty() {
-            if !self.ephemeral {
-                self.append_committed_transaction(
-                    &mut db,
-                    &before,
-                    &candidate,
-                    &committed_mutations,
-                )?;
+
+            let snapshot_work = if !committed_mutations.is_empty() {
+                if !self.ephemeral {
+                    let mutation_count = committed_mutations.len();
+                    let transaction_id = self.append_committed_transaction(
+                        &mut db,
+                        &before,
+                        &candidate,
+                        &committed_mutations,
+                    )?;
+                    Some((candidate, transaction_id, mutation_count))
+                } else {
+                    *db = candidate;
+                    None
+                }
             } else {
-                *db = candidate;
-            }
-        }
-        drop(db);
-        if !committed_mutations.is_empty() {
-            self.write_snapshot();
+                None
+            };
+            (results, snapshot_work)
+        };
+        if let Some((snapshot_db, transaction_id, mutation_count)) = snapshot_work {
+            self.schedule_mutation_log_sync();
+            self.after_committed_transaction(&snapshot_db, Some(transaction_id), mutation_count);
         }
         Ok(results)
     }
@@ -316,41 +611,49 @@ impl Store {
         let _commit = self.commit_lock.lock().map_err(|_| {
             StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
         })?;
-        let mut db = self.inner.write().map_err(|_| {
-            StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
-        })?;
-        let before = db.clone();
-        let (operations, metadata) = build_operations(&before)?;
-        let mut candidate = before.clone();
-        let mut committed_mutations = Vec::new();
-        let mut outcomes = Vec::with_capacity(operations.len());
+        let (outcomes, metadata, snapshot_work) = {
+            let mut db = self.inner.write().map_err(|_| {
+                StoreError::new(500, "lock_poisoned_exception", "store lock is poisoned")
+            })?;
+            let before = db.clone();
+            let (operations, metadata) = build_operations(&before)?;
+            let mut candidate = before.clone();
+            let mut committed_mutations = Vec::new();
+            let mut outcomes = Vec::with_capacity(operations.len());
 
-        for operation in operations {
-            let prepared = self.prepare_write_operation(&candidate, operation)?;
-            for mutation in &prepared.mutations {
-                self.validate_mutation(&candidate, mutation)?;
-                mutation.apply_to(&mut candidate);
-                self.validate_memory(&candidate)?;
+            for operation in operations {
+                let prepared = self.prepare_write_operation(&candidate, operation)?;
+                for mutation in &prepared.mutations {
+                    self.validate_mutation(&candidate, mutation)?;
+                    mutation.apply_to(&mut candidate);
+                    self.validate_memory(&candidate)?;
+                }
+                outcomes.push(prepared.outcome.resolve(&candidate)?);
+                committed_mutations.extend(prepared.mutations);
             }
-            outcomes.push(prepared.outcome.resolve(&candidate)?);
-            committed_mutations.extend(prepared.mutations);
-        }
 
-        if !committed_mutations.is_empty() {
-            if !self.ephemeral {
-                self.append_committed_transaction(
-                    &mut db,
-                    &before,
-                    &candidate,
-                    &committed_mutations,
-                )?;
+            let snapshot_work = if !committed_mutations.is_empty() {
+                if !self.ephemeral {
+                    let mutation_count = committed_mutations.len();
+                    let transaction_id = self.append_committed_transaction(
+                        &mut db,
+                        &before,
+                        &candidate,
+                        &committed_mutations,
+                    )?;
+                    Some((candidate, transaction_id, mutation_count))
+                } else {
+                    *db = candidate;
+                    None
+                }
             } else {
-                *db = candidate;
-            }
-        }
-        drop(db);
-        if !committed_mutations.is_empty() {
-            self.write_snapshot();
+                None
+            };
+            (outcomes, metadata, snapshot_work)
+        };
+        if let Some((snapshot_db, transaction_id, mutation_count)) = snapshot_work {
+            self.schedule_mutation_log_sync();
+            self.after_committed_transaction(&snapshot_db, Some(transaction_id), mutation_count);
         }
         Ok((outcomes, metadata))
     }
@@ -361,7 +664,7 @@ impl Store {
         before: &Database,
         candidate: &Database,
         mutations: &[Mutation],
-    ) -> StoreResult<()> {
+    ) -> StoreResult<String> {
         let transaction_id = transaction_id();
         mutation_log::append_transaction_begin(&self.mutation_log_path, &transaction_id, mutations)
             .map_err(|error| {
@@ -382,24 +685,96 @@ impl Store {
                 format!("failed to commit mutation transaction: {error}"),
             ));
         }
-        Ok(())
+        Ok(transaction_id)
     }
 
-    fn write_snapshot(&self) {
+    fn schedule_mutation_log_sync(&self) {
+        if let Some(syncer) = &self.mutation_log_syncer {
+            syncer.mark_dirty();
+        }
+    }
+
+    fn after_committed_transaction(
+        &self,
+        db: &Database,
+        transaction_id: Option<String>,
+        mutation_count: usize,
+    ) {
         if self.ephemeral {
             return;
         }
+        let Ok(mut state) = self.snapshot_state.lock() else {
+            eprintln!("opensearch-lite snapshot warning: snapshot state lock is poisoned");
+            return;
+        };
+        let now = SystemTime::now();
+        if state.dirty_since.is_none() {
+            state.dirty_since = Some(now);
+        }
+        state.dirty_writes = state.dirty_writes.saturating_add(mutation_count.max(1));
+        if transaction_id.is_some() {
+            state.last_transaction_id = transaction_id;
+        }
+        let dirty_elapsed = state
+            .dirty_since
+            .and_then(|dirty_since| now.duration_since(dirty_since).ok())
+            .unwrap_or_default();
+        if state.dirty_writes < self.snapshot_policy.write_threshold
+            && dirty_elapsed < self.snapshot_policy.interval
+        {
+            return;
+        }
+        let generation = state.generation.saturating_add(1);
+        let last_transaction_id = state.last_transaction_id.clone();
+
         let Ok(_snapshot) = self.snapshot_lock.lock() else {
             eprintln!("opensearch-lite snapshot warning: snapshot lock is poisoned");
             return;
         };
-        let Ok(db) = self.inner.read() else {
-            eprintln!("opensearch-lite snapshot warning: store lock is poisoned");
-            return;
-        };
-        if let Err(error) = snapshot::write_snapshot(&self.snapshot_path, &db) {
+        if let Err(error) = self.write_snapshot_generation(db, generation, last_transaction_id) {
             eprintln!("opensearch-lite snapshot warning: {error}");
+            return;
         }
+        state.generation = generation;
+        state.dirty_writes = 0;
+        state.dirty_since = None;
+    }
+
+    fn write_snapshot_generation(
+        &self,
+        db: &Database,
+        generation: u64,
+        last_transaction_id: Option<String>,
+    ) -> io::Result<()> {
+        let snapshot_file = snapshot_file_name(generation);
+        let generation_snapshot_path = self
+            .snapshot_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(&snapshot_file);
+        snapshot::write_snapshot(&generation_snapshot_path, db)?;
+        let metadata = snapshot_metadata(
+            db,
+            generation,
+            Some(snapshot_file.clone()),
+            last_transaction_id.clone(),
+            false,
+        );
+        snapshot::write_metadata(&self.snapshot_metadata_path, &metadata)?;
+        let compacted =
+            mutation_log::compact_after(&self.mutation_log_path, last_transaction_id.as_deref())?;
+        if compacted {
+            let metadata = snapshot_metadata(
+                db,
+                generation,
+                Some(snapshot_file),
+                last_transaction_id,
+                true,
+            );
+            snapshot::write_metadata(&self.snapshot_metadata_path, &metadata)?;
+        }
+        snapshot::write_snapshot(&self.snapshot_path, db)?;
+        Ok(())
     }
 
     fn prepare_write_operation(
@@ -592,6 +967,21 @@ impl Store {
         })
     }
 
+    pub fn put_registry_object(&self, namespace: &str, name: &str, raw: Value) -> StoreResult<()> {
+        self.commit(Mutation::PutRegistryObject {
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+            raw,
+        })
+    }
+
+    pub fn delete_registry_object(&self, namespace: &str, name: &str) -> StoreResult<()> {
+        self.commit(Mutation::DeleteRegistryObject {
+            namespace: namespace.to_string(),
+            name: name.to_string(),
+        })
+    }
+
     pub fn put_alias(&self, index: &str, alias: &str, raw: Value) -> StoreResult<()> {
         let index = self.resolve_index(index).ok_or_else(|| {
             not_found(
@@ -771,6 +1161,32 @@ impl Store {
                     ));
                 }
             }
+            Mutation::PutRegistryObject {
+                namespace, name, ..
+            } => {
+                validate_registry_namespace(namespace)?;
+                if name.trim().is_empty() {
+                    return Err(StoreError::new(
+                        400,
+                        "invalid_registry_object_exception",
+                        "registry object name must not be empty",
+                    ));
+                }
+            }
+            Mutation::DeleteRegistryObject { namespace, name } => {
+                validate_registry_namespace(namespace)?;
+                if !db
+                    .registries
+                    .get(namespace)
+                    .map(|registry| registry.contains_key(name))
+                    .unwrap_or(false)
+                {
+                    return Err(not_found(
+                        "registry_object_missing_exception",
+                        format!("registry object [{namespace}/{name}] missing"),
+                    ));
+                }
+            }
             Mutation::IndexDocument { index, id, .. }
             | Mutation::CreateDocument { index, id, .. }
             | Mutation::UpdateDocument { index, id, .. } => {
@@ -894,6 +1310,19 @@ impl Store {
     }
 }
 
+fn validate_loaded_database_memory(db: &Database, memory_limit_bytes: usize) -> io::Result<()> {
+    let bytes = estimate_database_bytes(db);
+    if bytes <= memory_limit_bytes {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "loaded durable state estimates stored data at {bytes} bytes, exceeding configured --memory-limit {memory_limit_bytes} bytes. Remediation: increase local or container memory, reduce local data, lower --memory-limit to fit the container, use a smaller or empty --data-dir, or move this workload to full OpenSearch locally, server-hosted OpenSearch, or cloud-hosted OpenSearch."
+        ),
+    ))
+}
+
 impl Database {
     pub fn resolve_index(&self, index_or_alias: &str) -> Option<String> {
         if self.indexes.contains_key(index_or_alias) {
@@ -1002,6 +1431,13 @@ fn estimate_database_bytes(db: &Database) -> usize {
         bytes = bytes.saturating_add(alias.index.len());
         bytes = bytes.saturating_add(estimate_value_bytes(&alias.raw));
     }
+    for (namespace, registry) in &db.registries {
+        bytes = bytes.saturating_add(namespace.len());
+        for (name, raw) in registry {
+            bytes = bytes.saturating_add(name.len());
+            bytes = bytes.saturating_add(estimate_value_bytes(raw));
+        }
+    }
     bytes
 }
 
@@ -1045,6 +1481,10 @@ fn transaction_id() -> String {
     format!("tx-{nanos:x}")
 }
 
+fn snapshot_file_name(generation: u64) -> String {
+    format!("snapshot.{generation:020}.json")
+}
+
 fn pattern_matches(pattern: &str, value: &str) -> bool {
     if pattern == "*" {
         return true;
@@ -1057,6 +1497,21 @@ fn pattern_matches(pattern: &str, value: &str) -> bool {
 
 fn not_found(error_type: &'static str, reason: String) -> StoreError {
     StoreError::new(404, error_type, reason)
+}
+
+fn validate_registry_namespace(namespace: &str) -> StoreResult<()> {
+    if matches!(
+        namespace,
+        "component_template" | "legacy_template" | "ingest_pipeline" | "search_pipeline" | "script"
+    ) {
+        Ok(())
+    } else {
+        Err(StoreError::new(
+            400,
+            "invalid_registry_namespace_exception",
+            format!("unsupported registry namespace [{namespace}]"),
+        ))
+    }
 }
 
 #[cfg(unix)]
@@ -1107,6 +1562,24 @@ impl Mutation {
             }
             Mutation::DeleteTemplate { name } => {
                 db.templates.remove(name);
+            }
+            Mutation::PutRegistryObject {
+                namespace,
+                name,
+                raw,
+            } => {
+                db.registries
+                    .entry(namespace.clone())
+                    .or_default()
+                    .insert(name.clone(), raw.clone());
+            }
+            Mutation::DeleteRegistryObject { namespace, name } => {
+                if let Some(registry) = db.registries.get_mut(namespace) {
+                    registry.remove(name);
+                    if registry.is_empty() {
+                        db.registries.remove(namespace);
+                    }
+                }
             }
             Mutation::PutMapping { index, mappings } => {
                 if let Some(index_meta) = db.indexes.get_mut(index) {

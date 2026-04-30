@@ -10,4 +10,6 @@ pub struct AgentRequestContext {
     pub api_name: String,
     pub route_tier: String,
     pub catalog: Value,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub tools: Value,
 }

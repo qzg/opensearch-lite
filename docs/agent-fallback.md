@@ -1,11 +1,13 @@
 # Agent Fallback
 
-Runtime agent fallback is a configured, read-only compatibility mechanism for
-unsupported read requests. It is disabled unless `--agent-endpoint` is set.
-Fallback runs after authentication and authorization. It cannot answer
-unauthenticated or unauthorized requests, and it is denied for security/control
-namespaces such as `_plugins/_security`, `_opendistro/_security`, `_security`,
-snapshots, and task-control APIs.
+Runtime agent fallback is a configured compatibility mechanism for unsupported
+or agent-assisted routes. Read fallback is enabled by `--agent-endpoint`.
+Write fallback is still disabled unless `--agent-enable-write-fallback` and
+`--agent-write-allowlist` explicitly allow the API name. Fallback runs after
+authentication and authorization. It cannot answer unauthenticated or
+unauthorized requests, and it is denied for security/control namespaces such as
+`_plugins/_security`, `_opendistro/_security`, `_security`, snapshots, and
+task-control APIs.
 
 First-tranche Dashboards fixture APIs are deterministic and do not use fallback:
 `indices.exists`, `field_caps`, `cat.plugins`, `cat.templates`,
@@ -28,6 +30,55 @@ plain HTTP on loopback addresses. Non-loopback HTTP endpoints are rejected unles
 Bearer tokens must be loaded from an environment variable or a secret file. The
 server must not log token material in startup logs, request logs, debug output,
 or errors.
+
+Write fallback requires an additional local-development opt-in:
+
+```sh
+opensearch-lite \
+  --agent-endpoint https://example.test/v1/chat/completions \
+  --agent-model model-name \
+  --agent-token-env OPENAI_API_KEY \
+  --agent-enable-write-fallback \
+  --agent-write-allowlist indices.put_template
+```
+
+The ignored local `.env` can hold a concrete OpenAI-compatible backend
+selection. For the current recommended cheap hosted model:
+
+```sh
+OPENSEARCH_LITE_AGENT_ENDPOINT=https://openrouter.ai/api/v1/chat/completions
+OPENSEARCH_LITE_AGENT_MODEL=deepseek/deepseek-v4-flash
+OPENSEARCH_LITE_AGENT_TOKEN_ENV=OPENROUTER_API_KEY
+```
+
+Run the server from that configuration with:
+
+```sh
+set -a
+. ./.env
+set +a
+cargo run -- \
+  --agent-endpoint "$OPENSEARCH_LITE_AGENT_ENDPOINT" \
+  --agent-model "$OPENSEARCH_LITE_AGENT_MODEL" \
+  --agent-token-env "$OPENSEARCH_LITE_AGENT_TOKEN_ENV"
+```
+
+The live backend tests are intentionally ignored because they use network and
+paid model calls. To exercise the real fallback backend:
+
+```sh
+set -a
+. ./.env
+set +a
+OPENSEARCH_LITE_LIVE_AGENT_TEST=1 \
+cargo test --test live_agent_backend -- --ignored --test-threads=1
+```
+
+The model can own the OpenSearch-shaped response, but it cannot write files
+directly. Durable side effects must appear as a `commit_mutations` tool call in
+the wrapper. The server validates the tool scope, authorization, memory limits,
+and storage mutation before committing. A successful write response that claims
+side effects without a successful commit is rejected.
 
 ## Data Exposure
 
@@ -62,13 +113,15 @@ The model must return only a JSON wrapper:
   "body": {},
   "confidence": 90,
   "failure_reason": null,
-  "read_only": true
+  "read_only": true,
+  "tool_calls": []
 }
 ```
 
 `body` is the OpenSearch-shaped JSON response returned to the caller after
 validation. The server rejects malformed wrappers, low confidence, oversized
-responses, write intent, and invalid status values.
+responses, unauthorized write intent, successful write claims without a commit,
+and invalid status values.
 
 Raw documents are serialized as quoted data with stable delimiters and are
 treated as untrusted. Document text must not override system or developer
@@ -77,10 +130,14 @@ instructions.
 ## Durable Files And Agents
 
 Coding agents with local filesystem access can inspect durable development data
-directly under `--data-dir`. `mutations.jsonl` is an append-only JSONL log with
+directly under `--data-dir`. `mutations.jsonl` is an append-first JSONL log with
 transaction `begin` and `commit` records; each begin record includes readable
 mutation kinds such as `create_index`, `index_document`, `update_document`, and
 `delete_document`. `snapshot.json`, when present, is materialized JSON state.
+`snapshot.meta.json` is a small readable metadata file with generation,
+estimated stored bytes, index count, document count, registry object count, and
+the mutation-log high-water mark. Snapshots flush after 1000 dirty writes or 10
+dirty minutes on the next write, unless configured otherwise.
 
 This direct inspection path is for local development and synthetic/debug data.
 Agents should avoid printing arbitrary document bodies, auth material, users
