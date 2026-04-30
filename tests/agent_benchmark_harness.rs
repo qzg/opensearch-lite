@@ -1,6 +1,6 @@
 use opensearch_lite::agent::benchmark::{
-    dry_run_report, grade_agent_output, load_fixtures, parse_candidate_sample, rank_candidates,
-    select_candidate_scores, LiveBenchmarkConfig, OPENROUTER_CHAT_COMPLETIONS_URL,
+    dry_run_report, fixture_context, grade_agent_output, load_fixtures, parse_candidate_sample,
+    rank_candidates, select_candidate_scores, LiveBenchmarkConfig, OPENROUTER_CHAT_COMPLETIONS_URL,
 };
 use serde_json::json;
 use std::path::Path;
@@ -156,6 +156,23 @@ fn benchmark_config_detects_direct_chat_endpoints() {
     config.chat_completions_url = "http://qzg-spark2:8000/v1/chat/completions".to_string();
 
     assert!(config.uses_direct_chat_endpoint());
+}
+
+#[test]
+fn fixture_context_does_not_expose_live_grading_thresholds_to_candidate_model() {
+    let fixture = load_fixtures(Path::new("fixtures/agent_fallback"))
+        .unwrap()
+        .into_iter()
+        .find(|fixture| fixture.id == "benign_noop.cluster_reroute")
+        .unwrap();
+
+    let context = fixture_context(&fixture);
+
+    assert!(fixture.expected.get("minimum_live_score").is_some());
+    assert!(context
+        .catalog
+        .pointer("/expected_behavior/minimum_live_score")
+        .is_none());
 }
 
 #[test]

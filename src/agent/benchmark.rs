@@ -664,7 +664,7 @@ fn response_shape(value: &Value) -> Value {
     })
 }
 
-fn fixture_context(fixture: &BenchmarkFixture) -> AgentRequestContext {
+pub fn fixture_context(fixture: &BenchmarkFixture) -> AgentRequestContext {
     let method = fixture
         .request
         .get("method")
@@ -694,10 +694,19 @@ fn fixture_context(fixture: &BenchmarkFixture) -> AgentRequestContext {
         },
         catalog: json!({
             "benchmark_fixture": fixture.id,
-            "expected_behavior": fixture.expected
+            "expected_behavior": fixture_expected_behavior(fixture)
         }),
         tools: tool_catalog(route.api_name, write_enabled),
     }
+}
+
+fn fixture_expected_behavior(fixture: &BenchmarkFixture) -> Value {
+    let Some(object) = fixture.expected.as_object() else {
+        return fixture.expected.clone();
+    };
+    let mut expected = object.clone();
+    expected.remove("minimum_live_score");
+    Value::Object(expected)
 }
 
 fn is_commit_call(call: &AgentToolCall) -> bool {

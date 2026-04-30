@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 use crate::{
@@ -6,11 +6,39 @@ use crate::{
     storage::{mutation_log::Mutation, Store, StoreError},
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AgentToolCall {
     pub name: String,
     #[serde(default)]
     pub arguments: Value,
+}
+
+impl<'de> Deserialize<'de> for AgentToolCall {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let name = value
+            .get("name")
+            .and_then(Value::as_str)
+            .or_else(|| value.pointer("/function/name").and_then(Value::as_str))
+            .ok_or_else(|| D::Error::custom("agent tool call missing name or function.name"))?
+            .to_string();
+        let arguments = value
+            .get("arguments")
+            .or_else(|| value.pointer("/function/arguments"))
+            .map(normalize_tool_arguments)
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        Ok(Self { name, arguments })
+    }
+}
+
+fn normalize_tool_arguments(value: &Value) -> Value {
+    match value {
+        Value::String(raw) => serde_json::from_str(raw).unwrap_or_else(|_| value.clone()),
+        _ => value.clone(),
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -80,6 +80,22 @@ The execution path asks each selected model for the fallback response wrapper
 and grades status, read-only/write-tool policy, durable namespace, and raw body
 preservation where the fixture requires them.
 
+The same fixture set also backs an ignored live regression test for the
+configured runtime model:
+
+```sh
+set -a
+. ./.env
+set +a
+OPENSEARCH_LITE_LIVE_AGENT_TEST=1 \
+cargo test --test live_agent_backend -- --ignored --test-threads=1
+```
+
+The live regression test fails per fixture when the model returns an invalid
+wrapper or falls below that fixture's minimum score. Keep deterministic checks
+in the fixture grader when possible; reserve Pro/frontier LLM-as-judge scoring
+for semantic response-quality questions that cannot be checked structurally.
+
 Reports should be written under `reports/agent-fallback/`, which is ignored by
 Git. Promote conclusions into documentation only after reviewing the generated
 report and redacting any provider response details that could expose secrets.
