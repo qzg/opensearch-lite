@@ -31,8 +31,10 @@ user explicitly asks:
 - Route classification is a safety boundary. Known mutating, control, or
   wrong-method APIs should fail closed rather than reaching runtime agent
   fallback.
-- Runtime agent fallback is read-only and privacy-sensitive. Do not broaden the
-  context sent to a configured agent endpoint without tests and documentation.
+- Runtime agent fallback is privacy-sensitive. Read fallback remains the
+  default; write fallback must stay explicit, route-allowlisted, request-scoped,
+  and committed only through server-validated tools with tests and
+  documentation.
 - Authorization is based on generated route access classes, not HTTP method
   alone. Some OpenSearch read APIs use `POST`.
 - Security checks should run before deterministic handlers, best-effort

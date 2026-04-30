@@ -23,6 +23,10 @@ and `admin` requires `admin`.
 | `indices.get`, `indices.exists` | implemented | read | Single-node local catalog lookup and `HEAD /{index}` existence checks. |
 | `indices.put_index_template`, `indices.delete_index_template`, `indices.delete_template` | implemented | write | Composable templates are stored as readable JSON; legacy template delete returns an OpenSearch-shaped missing-template error unless a matching local template exists. |
 | `indices.get_index_template`, `indices.exists_index_template` | implemented | read | Stored template lookup. |
+| `cluster.put_component_template`, `cluster.get_component_template`, `cluster.exists_component_template`, `cluster.delete_component_template` | implemented | admin/read | Component templates are stored as readable registry JSON. |
+| `ingest.put_pipeline`, `ingest.get_pipeline`, `ingest.delete_pipeline` | implemented | write/read | Registry storage only; processor execution is not modeled. |
+| `search_pipeline.put`, `search_pipeline.get`, `search_pipeline.delete` | implemented | write/read | Registry storage only; pipeline execution is not modeled. |
+| `put_script`, `get_script`, `delete_script` | implemented | write/read | Stored script definitions are readable JSON; arbitrary Painless execution remains unsupported. |
 | `indices.put_alias`, `indices.delete_alias`, `indices.update_aliases` | implemented | write | `_aliases` and `_alias` support `add`, `remove`, and local `remove_index` action sequences. |
 | `indices.get_alias`, `indices.exists_alias` | implemented | read | Alias misses return explicit not-found errors. |
 | `indices.get_mapping`, `indices.get_field_mapping`, `indices.get_settings` | implemented | read | Stored as JSON catalog metadata and used by compatibility clients. |
@@ -36,6 +40,7 @@ and `admin` requires `admin`.
 | `indices.refresh` | implemented | write | No-op visibility barrier; writes are already visible after commit in the local store. |
 | `bulk` | implemented | write | `POST`/`PUT` only; malformed source lines and invalid metadata produce errors without mutation. |
 | `search`, `count`, `mget`, `msearch` | implemented | read | In-memory search and read APIs, including read APIs that use `POST`; supports the documented Discover query and first visualization aggregation subset. |
+| `indices.validate_query`, `indices.analyze`, `explain` | implemented/scaffold | read | Development-scale query validation, simple text analysis, and local evaluator explanation. |
 | `scroll`, `clear_scroll` | implemented | read | In-memory process-local scroll cursors for migration-style batched reads; cursors are not durable across restarts. |
 | `reindex`, `tasks.get` | implemented | write/read | Reindex executes synchronously against local data; `wait_for_completion=false` returns a synthetic completed task for polling clients. |
 | `delete_by_query`, `update_by_query` | implemented/narrow | write | Query-matched local mutation. `update_by_query` only supports the saved-object namespace/workspace removal scripts used by Dashboards-style clients. |
@@ -78,6 +83,31 @@ compatibility headers:
 - generic `cat.*` routes outside the implemented `cat.indices`, `cat.health`,
   `cat.plugins`, and `cat.templates` subset
 
+## Mocked Local No-Ops
+
+Mocked responses are positive compatibility no-ops for APIs whose distributed
+cluster side effects do not exist in OpenSearch Lite. They include compatibility
+headers and an `opensearch_lite` body field explaining the local behavior and
+the path to full OpenSearch when the behavior matters.
+
+Initial mocked families:
+
+- `cluster.allocation_explain`
+- `cluster.put_settings`
+- `cluster.reroute`
+- cluster voting/decommission/weighted-routing control toggles
+- `indices.clear_cache`
+- `indices.flush`
+- `indices.forcemerge`
+- `indices.open`
+- `indices.upgrade`
+- `delete_by_query_rethrottle`
+- `reindex_rethrottle`
+- `update_by_query_rethrottle`
+
+Strict compatibility mode rejects mocked routes unless they are included in
+`--strict-allowlist`.
+
 ## Runtime Fallback Eligibility
 
 Only explicitly read-oriented OpenSearch APIs are eligible for runtime agent
@@ -86,6 +116,12 @@ their context is metadata-only; unknown `POST` requests fail closed. Mutating
 APIs outside the deterministic local surface, scripts outside the narrow
 saved-object update subset, snapshots, pipelines, task cancellation, and other
 write/control routes are never routed to fallback.
+
+Legacy template writes (`indices.put_template`) are identified as
+`agent_write_fallback_eligible` so the configured fallback model can translate
+legacy request shape into the local registry through the `commit_mutations`
+tool. It fails unless write-enabled fallback is explicitly configured and the
+caller has sufficient write authorization.
 
 Unsupported routes return structured OpenSearch-shaped errors with recovery
 hints for agent callers.

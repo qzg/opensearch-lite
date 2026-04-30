@@ -9,7 +9,7 @@ use crate::{
         context::AgentRequestContext,
         errors::AgentError,
         prompt,
-        validation::{validate_wrapper, AgentResponseWrapper},
+        validation::{parse_wrapper, validate_wrapper_value, AgentResponseWrapper, ValidationMode},
     },
     responses::Response,
 };
@@ -46,27 +46,35 @@ impl AgentClient {
     }
 
     pub async fn complete(&self, context: AgentRequestContext) -> Result<Response, AgentError> {
+        let wrapper = self.complete_raw(context).await?;
+        let threshold = match self {
+            Self::Disabled => 1,
+            Self::Http(client) => client.config.confidence_threshold,
+            Self::Static(_) => 1,
+        };
+        validate_wrapper_value(wrapper, threshold, ValidationMode::ReadOnly)
+    }
+
+    pub async fn complete_raw(
+        &self,
+        context: AgentRequestContext,
+    ) -> Result<AgentResponseWrapper, AgentError> {
         match self {
             Self::Disabled => Err(AgentError::new(
                 "agent fallback is disabled because no endpoint is configured",
                 "Use an implemented API, simplify the query, or configure --agent-endpoint.",
             )),
-            Self::Static(wrapper) => {
-                let raw = serde_json::to_string(wrapper).map_err(|error| {
-                    AgentError::new(
-                        format!("failed to encode static agent response: {error}"),
-                        "retry",
-                    )
-                })?;
-                validate_wrapper(&raw, 1, usize::MAX)
-            }
-            Self::Http(client) => client.complete(context).await,
+            Self::Static(wrapper) => Ok(wrapper.clone()),
+            Self::Http(client) => client.complete_raw(context).await,
         }
     }
 }
 
 impl HttpAgentClient {
-    async fn complete(&self, context: AgentRequestContext) -> Result<Response, AgentError> {
+    async fn complete_raw(
+        &self,
+        context: AgentRequestContext,
+    ) -> Result<AgentResponseWrapper, AgentError> {
         let endpoint = self.config.endpoint.as_ref().ok_or_else(|| {
             AgentError::new("agent endpoint missing", "configure --agent-endpoint")
         })?;
@@ -130,11 +138,7 @@ impl HttpAgentClient {
                     "Use an OpenAI-compatible chat completion response shape.",
                 )
             })?;
-        validate_wrapper(
-            content,
-            self.config.confidence_threshold,
-            self.config.response_limit_bytes,
-        )
+        parse_wrapper(content, self.config.response_limit_bytes)
     }
 
     fn load_token(&self) -> Result<Option<String>, AgentError> {

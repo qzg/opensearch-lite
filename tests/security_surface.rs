@@ -205,6 +205,7 @@ fn read_only_authorization_allows_read_post_apis_and_blocks_mutations() {
         (Method::POST, "/orders/_delete_by_query"),
         (Method::POST, "/orders/_update_by_query"),
         (Method::POST, "/_reindex"),
+        (Method::PUT, "/_cluster/settings"),
     ] {
         let request = request_with_context(method.clone(), path, context.clone());
         let route = classify(&method, path);

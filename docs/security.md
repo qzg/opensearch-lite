@@ -32,6 +32,15 @@ at startup. `--client-cert-ca-file` plus `--require-client-cert` enables mTLS
 transport hardening, but client certificates do not create users or roles in
 this tranche.
 
+`--memory-limit` is the local stored-data budget, not a hard process RSS cap.
+When Linux cgroup memory limits are visible, startup and `--validate-config`
+compare that budget with the detected container limit after reserving runtime
+overhead. If the configured data budget or snapshot metadata cannot fit safely,
+OpenSearch Lite fails before loading the full data set and prints remediation:
+increase local/container memory, reduce local data, lower `--memory-limit`, use
+a smaller `--data-dir`, or move the workload to full OpenSearch locally,
+server-hosted OpenSearch, or cloud-hosted OpenSearch.
+
 Use `--validate-config` to check mounted files without serving traffic:
 
 ```sh
@@ -47,7 +56,10 @@ opensearch-lite \
 
 That command is designed for `docker exec`, `kubectl exec`, and coding-agent
 repair loops. It reports missing, unreadable, or malformed mounted inputs
-without printing secret file contents.
+without printing secret file contents. It also prints resource diagnostics:
+configured data memory budget, detected container memory limit when available,
+reserved overhead, effective safe data budget, and snapshot index/document
+metadata when `snapshot.meta.json` exists.
 
 ## Users File
 

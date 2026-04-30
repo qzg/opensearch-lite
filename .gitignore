@@ -3,4 +3,5 @@
 *.jsonl
 *.log
 .env
+/reports/agent-fallback/
 .DS_Store

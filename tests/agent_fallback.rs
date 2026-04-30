@@ -27,6 +27,7 @@ fn wrapper_validation_rejects_write_intent() {
         confidence: 100,
         failure_reason: None,
         read_only: false,
+        tool_calls: Vec::new(),
     };
     let raw = serde_json::to_string(&wrapper).unwrap();
 
