@@ -1,7 +1,8 @@
 use crate::{
-    api,
+    api, api_spec,
     http::{body::ensure_body_limit, request::Request},
     responses::{open_search_error, Response},
+    security,
     server::AppState,
 };
 
@@ -12,7 +13,11 @@ pub async fn handle(state: AppState, request: Request) -> Response {
     if let Err(response) = guard_request(&state, &request) {
         return response;
     }
-    api::handle_request(state, request).await
+    let route = api_spec::classify(&request.method, &request.path);
+    if let Err(response) = security::authz::authorize(&request, &route) {
+        return response;
+    }
+    api::handle_classified_request(state, request, route).await
 }
 
 fn guard_request(state: &AppState, request: &Request) -> Result<(), Response> {

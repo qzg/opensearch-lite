@@ -7,6 +7,7 @@ services:
       - --listen
       - 0.0.0.0:9200
       - --allow-nonlocal-listen
+      - --allow-insecure-non-loopback
       - --ephemeral
     ports:
       - "127.0.0.1:9200:9200"

@@ -6,6 +6,8 @@ use std::{
     time::Duration,
 };
 
+use crate::security::{SecurityConfig, TlsConfig};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentConfig {
     pub endpoint: Option<String>,
@@ -36,6 +38,7 @@ pub struct Config {
     pub strict_compatibility: bool,
     pub strict_allowlist: Vec<String>,
     pub agent: AgentConfig,
+    pub security: SecurityConfig,
 }
 
 impl Config {
@@ -49,6 +52,9 @@ impl Config {
         T: Into<OsString>,
     {
         let mut config = Self::default();
+        let mut tls_cert_file: Option<PathBuf> = None;
+        let mut tls_key_file: Option<PathBuf> = None;
+        let mut tls_ca_file: Option<PathBuf> = None;
         let mut args = args.into_iter().map(Into::into);
         let _program = args.next();
 
@@ -83,6 +89,21 @@ impl Config {
                     config.agent.allow_insecure_endpoint = true;
                     continue;
                 }
+                "--allow-insecure-non-loopback" => {
+                    reject_inline_value(flag, inline_value)?;
+                    config.security.allow_insecure_non_loopback = true;
+                    continue;
+                }
+                "--require-client-cert" => {
+                    reject_inline_value(flag, inline_value)?;
+                    config.security.require_client_cert = true;
+                    continue;
+                }
+                "--validate-config" => {
+                    reject_inline_value(flag, inline_value)?;
+                    config.security.validate_only = true;
+                    continue;
+                }
                 "--listen"
                 | "--advertised-version"
                 | "--data-dir"
@@ -101,7 +122,13 @@ impl Config {
                 | "--agent-timeout-ms"
                 | "--agent-context-limit"
                 | "--agent-response-limit"
-                | "--agent-confidence-threshold" => {}
+                | "--agent-confidence-threshold"
+                | "--tls-cert-file"
+                | "--tls-key-file"
+                | "--tls-ca-file"
+                | "--users-file"
+                | "--client-cert-ca-file"
+                | "--auth-failure-delay-ms" => {}
                 _ => return Err(format!("unknown argument {flag:?}\n\n{}", Self::usage())),
             }
 
@@ -163,8 +190,31 @@ impl Config {
                     }
                     config.agent.confidence_threshold = threshold as u8;
                 }
+                "--tls-cert-file" => tls_cert_file = Some(PathBuf::from(value)),
+                "--tls-key-file" => tls_key_file = Some(PathBuf::from(value)),
+                "--tls-ca-file" => tls_ca_file = Some(PathBuf::from(value)),
+                "--users-file" => config.security.users_file = Some(PathBuf::from(value)),
+                "--client-cert-ca-file" => {
+                    config.security.client_cert_ca_file = Some(PathBuf::from(value))
+                }
+                "--auth-failure-delay-ms" => {
+                    let ms = parse_positive_u64(flag, &value)?;
+                    config.security.auth_failure_delay = Duration::from_millis(ms);
+                }
                 _ => unreachable!("unknown flags are rejected before value parsing"),
             }
+        }
+
+        if tls_cert_file.is_some() || tls_key_file.is_some() || tls_ca_file.is_some() {
+            let cert_file = tls_cert_file
+                .ok_or_else(|| "--tls-key-file requires --tls-cert-file".to_string())?;
+            let key_file = tls_key_file
+                .ok_or_else(|| "--tls-cert-file requires --tls-key-file".to_string())?;
+            config.security.tls = Some(TlsConfig {
+                cert_file,
+                key_file,
+                server_ca_file: tls_ca_file,
+            });
         }
 
         config.validate()?;
@@ -191,11 +241,13 @@ impl Config {
         }
         if !self.allow_nonlocal_listen && !self.listen.ip().is_loopback() {
             return Err(format!(
-                "--listen {} is not loopback; pass --allow-nonlocal-listen to expose this unauthenticated local-only server",
+                "--listen {} is not loopback; pass --allow-nonlocal-listen and configure TLS/auth for workgroup use",
                 self.listen
             ));
         }
         self.agent.validate()?;
+        self.security
+            .validate_posture(self.listen, self.allow_nonlocal_listen)?;
         Ok(())
     }
 
@@ -216,6 +268,15 @@ impl Config {
             "  --max-documents <count>                 Maximum stored documents [default: 1000000]",
             "  --connection-limit <count>              Maximum concurrent connections [default: 128]",
             "  --allow-nonlocal-listen                 Permit binding to non-loopback addresses",
+            "  --allow-insecure-non-loopback           Permit non-loopback HTTP/no-auth development mode",
+            "  --tls-cert-file <path>                  PEM certificate chain for HTTPS",
+            "  --tls-key-file <path>                   PEM private key for HTTPS",
+            "  --tls-ca-file <path>                    CA bundle clients should trust",
+            "  --users-file <path>                     JSON users file with PHC password hashes",
+            "  --require-client-cert                   Require a client certificate at TLS handshake",
+            "  --client-cert-ca-file <path>            CA bundle for verifying client certificates",
+            "  --auth-failure-delay-ms <ms>            Delay after invalid credentials [default: 25]",
+            "  --validate-config                       Validate TLS/auth config and exit",
             "  --strict-compatibility                  Fail best-effort/fallback routes unless allowlisted",
             "  --strict-allowlist <api,api>            Route names allowed in strict compatibility mode",
             "  --agent-endpoint <url>                  OpenAI-compatible chat endpoint",
@@ -288,6 +349,7 @@ impl Default for Config {
             strict_compatibility: false,
             strict_allowlist: Vec::new(),
             agent: AgentConfig::default(),
+            security: SecurityConfig::default(),
         }
     }
 }

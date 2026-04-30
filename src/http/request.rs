@@ -4,6 +4,8 @@ use bytes::Bytes;
 use http::{HeaderMap, Method, Uri};
 use url::form_urlencoded;
 
+use crate::security::SecurityContext;
+
 #[derive(Debug, Clone)]
 pub struct Request {
     pub method: Method,
@@ -11,10 +13,27 @@ pub struct Request {
     pub query: Vec<(String, String)>,
     pub headers: BTreeMap<String, String>,
     pub body: Bytes,
+    pub security: SecurityContext,
 }
 
 impl Request {
     pub fn from_parts(method: Method, uri: Uri, headers: HeaderMap, body: Bytes) -> Self {
+        Self::from_parts_with_security(
+            method,
+            uri,
+            headers,
+            body,
+            SecurityContext::disabled_loopback(),
+        )
+    }
+
+    pub fn from_parts_with_security(
+        method: Method,
+        uri: Uri,
+        headers: HeaderMap,
+        body: Bytes,
+        security: SecurityContext,
+    ) -> Self {
         let query = uri.query().map(parse_query).unwrap_or_default();
         let headers = headers
             .iter()
@@ -32,6 +51,7 @@ impl Request {
             query,
             headers,
             body,
+            security,
         }
     }
 

@@ -2,6 +2,10 @@
 
 Runtime agent fallback is a configured, read-only compatibility mechanism for
 unsupported read requests. It is disabled unless `--agent-endpoint` is set.
+Fallback runs after authentication and authorization. It cannot answer
+unauthenticated or unauthorized requests, and it is denied for security/control
+namespaces such as `_plugins/_security`, `_opendistro/_security`, `_security`,
+snapshots, and task-control APIs.
 
 ## Configuration
 
@@ -36,6 +40,11 @@ If a request does not identify a validated target index, fallback receives
 metadata only plus omission counts. Cloud-hosted endpoints may still receive
 local indexed data for targeted requests. Do not enable fallback for private
 data unless that trust boundary is acceptable.
+
+Authorization headers and secret-like query or body fields are redacted before
+fallback context is constructed. If a coding agent receives an authn/authz
+failure, it should adjust credentials or choose a permitted read API rather
+than expecting fallback to complete the request.
 
 ## Response Contract
 

@@ -30,11 +30,31 @@ curl -X POST http://127.0.0.1:9200/orders/_count -H 'content-type: application/j
 ## Local Safety
 
 - Loopback binding is the default.
-- Non-loopback binding requires `--allow-nonlocal-listen`.
+- Non-loopback binding requires `--allow-nonlocal-listen` and, by default, TLS
+  plus `--users-file`.
+- Cleartext/no-auth non-loopback serving requires the explicit
+  `--allow-insecure-non-loopback` development exception.
 - Durable mode writes readable JSON/JSONL files under `--data-dir`.
 - `--ephemeral` keeps state in memory for disposable runs.
 - Strict compatibility mode can fail best-effort and fallback responses during
   CI or migration checks.
+
+## Secured Workgroup Start
+
+```sh
+opensearch-lite \
+  --listen 0.0.0.0:9200 \
+  --allow-nonlocal-listen \
+  --tls-cert-file /run/opensearch-lite/tls/tls.crt \
+  --tls-key-file /run/opensearch-lite/tls/tls.key \
+  --tls-ca-file /run/opensearch-lite/tls/ca.crt \
+  --users-file /run/opensearch-lite/auth/users.json
+```
+
+Run the same arguments with `--validate-config` from a shell, `docker exec`, or
+`kubectl exec` to verify mounted TLS and users files without starting a
+listener. See [docs/security.md](docs/security.md) and
+[docs/kubernetes-security.md](docs/kubernetes-security.md).
 
 ## Verification
 
@@ -49,6 +69,8 @@ OPENSEARCH_PARITY_DOCKER=1 scripts/run-opensearch-parity-smoke.sh
 
 The ignored client smoke tests invoke the matching scripts under `scripts/`.
 Those scripts can also be run directly when debugging a single client.
+Set `OPENSEARCH_LITE_SECURE_SMOKE=1` on a smoke script to start a temporary
+HTTPS/auth server and prove CA-trusted client connectivity.
 Selected upstream REST YAML fixtures run through
 `cargo test --test opensearch_yaml_runner`; see `docs/yaml-parity.md` for the
 current fixture set and runner policy.
@@ -66,6 +88,8 @@ documents relevant to the request. See [docs/agent-fallback.md](docs/agent-fallb
 
 - [Compatibility](docs/compatibility.md)
 - [Supported APIs](docs/supported-apis.md)
+- [Security](docs/security.md)
+- [Kubernetes security](docs/kubernetes-security.md)
 - [Agent fallback](docs/agent-fallback.md)
 - [Driver examples](docs/driver-examples.md)
 - [Migration guidance](docs/migration.md)

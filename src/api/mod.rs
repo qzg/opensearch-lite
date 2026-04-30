@@ -16,6 +16,7 @@ use crate::{
     http::request::Request,
     responses::{acknowledged, best_effort, info, logging, open_search_error, Response},
     search::{self as search_engine, dsl::SearchRequest},
+    security,
     server::AppState,
     storage::{
         mutation_log::Mutation, Database, Store, StoreError, StoreResult, WriteOperation,
@@ -25,6 +26,17 @@ use crate::{
 
 pub async fn handle_request(state: AppState, request: Request) -> Response {
     let route = api_spec::classify(&request.method, &request.path);
+    if let Err(response) = security::authz::authorize(&request, &route) {
+        return response;
+    }
+    handle_classified_request(state, request, route).await
+}
+
+pub async fn handle_classified_request(
+    state: AppState,
+    request: Request,
+    route: api_spec::RouteMatch,
+) -> Response {
     if let Some(response) = strict_guard(&state, &route) {
         return response;
     }
@@ -157,13 +169,15 @@ async fn handle_agent_read(state: AppState, request: Request, api_name: &str) ->
     let body = if request.body.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&request.body).unwrap_or_else(|_| {
-            json!({
-                "unparsed_body": String::from_utf8_lossy(&request.body).to_string()
+        serde_json::from_slice(&request.body)
+            .map(redact_secret_values)
+            .unwrap_or_else(|_| {
+                json!({
+                    "unparsed_body_omitted": true
+                })
             })
-        })
     };
-    let query = query_value(&request.query);
+    let query = redact_secret_values(query_value(&request.query));
     let catalog = match state
         .store
         .read_database(|db| agent_catalog_context(db, &request, api_name))
@@ -2169,6 +2183,38 @@ fn query_value(query: &[(String, String)]) -> Value {
         }
     }
     Value::Object(object)
+}
+
+fn redact_secret_values(value: Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| {
+                    if secret_like_key(&key) {
+                        (key, Value::String("[REDACTED]".to_string()))
+                    } else {
+                        (key, redact_secret_values(value))
+                    }
+                })
+                .collect(),
+        ),
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(redact_secret_values).collect())
+        }
+        other => other,
+    }
+}
+
+fn secret_like_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("password")
+        || key.contains("passwd")
+        || key.contains("token")
+        || key.contains("secret")
+        || key.contains("authorization")
+        || key == "api_key"
+        || key == "apikey"
 }
 
 fn agent_catalog_context(db: &Database, request: &Request, api_name: &str) -> Value {

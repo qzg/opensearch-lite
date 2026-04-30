@@ -26,6 +26,23 @@ They add out-of-body compatibility signals such as:
 Use `--strict-compatibility` to make best-effort and fallback responses fail
 unless the route appears in `--strict-allowlist`.
 
+## Security Compatibility
+
+TLS plus Basic authentication is supported for client connection compatibility.
+The local users file provides coarse `admin`, `read_write`, and `read_only`
+roles so development and workgroup clients can exercise normal secured
+connection settings.
+
+This is not OpenSearch Security plugin parity. Security management APIs,
+tenants, document-level security, field-level security, index-pattern
+permissions, audit-log management, SAML, OIDC, LDAP, and AWS SigV4 are not
+implemented in this tranche. Requests under `_plugins/_security`,
+`_opendistro/_security`, `_security`, snapshots, and task-control namespaces
+fail closed instead of reaching runtime fallback.
+
+Strict compatibility is evaluated after authentication and authorization.
+Security does not make best-effort or fallback routes look implemented.
+
 ## Current Implemented Surface
 
 - Root info: `GET /`, `HEAD /`

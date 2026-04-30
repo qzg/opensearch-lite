@@ -1,5 +1,5 @@
 use http::Method;
-use opensearch_lite::api_spec::{classify, inventory, Tier};
+use opensearch_lite::api_spec::{classify, inventory, AccessClass, Tier};
 
 #[test]
 fn route_inventory_has_required_core_entries() {
@@ -49,6 +49,7 @@ fn mutating_post_routes_fail_closed_and_read_routes_remain_fallback_eligible() {
     let delete_by_query = classify(&Method::POST, "/orders/_delete_by_query");
     assert_eq!(delete_by_query.api_name, "delete_by_query");
     assert_eq!(delete_by_query.tier, Tier::Unsupported);
+    assert_eq!(delete_by_query.access, AccessClass::Write);
 
     let delete_by_query_wrong_method = classify(&Method::GET, "/orders/_delete_by_query");
     assert_eq!(delete_by_query_wrong_method.api_name, "delete_by_query");
@@ -61,9 +62,15 @@ fn mutating_post_routes_fail_closed_and_read_routes_remain_fallback_eligible() {
     let count = classify(&Method::POST, "/orders/_count");
     assert_eq!(count.api_name, "count");
     assert_eq!(count.tier, Tier::Implemented);
+    assert_eq!(count.access, AccessClass::Read);
 
     let unknown_post = classify(&Method::POST, "/_plugins/_unknown_write");
     assert_eq!(unknown_post.tier, Tier::Unsupported);
+    assert_eq!(unknown_post.access, AccessClass::Write);
+
+    let unknown_security_post = classify(&Method::POST, "/_plugins/_security/unknown");
+    assert_eq!(unknown_security_post.tier, Tier::Unsupported);
+    assert_eq!(unknown_security_post.access, AccessClass::Admin);
 }
 
 #[test]
@@ -86,14 +93,50 @@ fn refresh_and_existence_routes_use_specific_api_names() {
     let refresh = classify(&Method::POST, "/orders/_refresh");
     assert_eq!(refresh.api_name, "indices.refresh");
     assert_eq!(refresh.tier, Tier::Implemented);
+    assert_eq!(refresh.access, AccessClass::Write);
 
     let template_exists = classify(&Method::HEAD, "/_index_template/orders");
     assert_eq!(template_exists.api_name, "indices.exists_index_template");
     assert_eq!(template_exists.tier, Tier::Implemented);
+    assert_eq!(template_exists.access, AccessClass::Read);
 
     let alias_exists = classify(&Method::HEAD, "/orders/_alias/orders-read");
     assert_eq!(alias_exists.api_name, "indices.exists_alias");
     assert_eq!(alias_exists.tier, Tier::Implemented);
+    assert_eq!(alias_exists.access, AccessClass::Read);
+}
+
+#[test]
+fn generated_inventory_contains_access_classes() {
+    let inventory = inventory();
+    let read_routes = inventory
+        .iter()
+        .filter(|route| route.access == AccessClass::Read)
+        .count();
+    let write_routes = inventory
+        .iter()
+        .filter(|route| route.access == AccessClass::Write)
+        .count();
+    let admin_routes = inventory
+        .iter()
+        .filter(|route| route.access == AccessClass::Admin)
+        .count();
+
+    assert!(read_routes > 0, "inventory should include read routes");
+    assert!(write_routes > 0, "inventory should include write routes");
+    assert!(admin_routes > 0, "inventory should include admin routes");
+
+    let search = inventory
+        .iter()
+        .find(|route| route.name == "search")
+        .expect("missing search route");
+    assert_eq!(search.access, AccessClass::Read);
+
+    let create_index = inventory
+        .iter()
+        .find(|route| route.name == "indices.create")
+        .expect("missing indices.create route");
+    assert_eq!(create_index.access, AccessClass::Write);
 }
 
 #[test]

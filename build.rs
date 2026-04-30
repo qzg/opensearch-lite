@@ -32,11 +32,12 @@ fn main() {
     routes.sort_by(|left, right| left.name.cmp(&right.name));
 
     let mut generated = String::from(
-        "use super::Tier;\n\n\
+        "use super::{AccessClass, Tier};\n\n\
 #[derive(Debug, Clone, Copy)]\n\
 pub struct ApiRoute {\n\
     pub name: &'static str,\n\
     pub tier: Tier,\n\
+    pub access: AccessClass,\n\
     pub methods: &'static [&'static str],\n\
     pub paths: &'static [&'static str],\n\
 }\n\n\
@@ -47,6 +48,7 @@ pub fn inventory() -> &'static [ApiRoute] {\n\
         generated.push_str("        ApiRoute {\n");
         generated.push_str(&format!("            name: {:?},\n", route.name));
         generated.push_str(&format!("            tier: {},\n", route.tier));
+        generated.push_str(&format!("            access: {},\n", route.access));
         generated.push_str(&format!("            methods: &{:?},\n", route.methods));
         generated.push_str(&format!("            paths: &{:?},\n", route.paths));
         generated.push_str("        },\n");
@@ -60,6 +62,7 @@ pub fn inventory() -> &'static [ApiRoute] {\n\
 struct Route {
     name: String,
     tier: &'static str,
+    access: &'static str,
     methods: Vec<String>,
     paths: Vec<String>,
 }
@@ -96,11 +99,65 @@ fn routes_for_file(path: &Path) -> Vec<Route> {
         routes.push(Route {
             name: name.to_string(),
             tier: tier_for(name, &methods),
+            access: access_for(name, &methods),
             methods,
             paths: vec![route_path.to_string()],
         });
     }
     routes
+}
+
+fn access_for(name: &str, methods: &[String]) -> &'static str {
+    if is_admin_api(name) {
+        return "AccessClass::Admin";
+    }
+    if is_read_api(name)
+        || methods
+            .iter()
+            .all(|method| matches!(method.as_str(), "GET" | "HEAD"))
+    {
+        return "AccessClass::Read";
+    }
+    "AccessClass::Write"
+}
+
+fn is_admin_api(name: &str) -> bool {
+    name.starts_with("security.")
+        || name.starts_with("snapshot.")
+        || name.starts_with("tasks.")
+        || name.starts_with("cluster.put_")
+        || name.starts_with("cluster.delete_")
+}
+
+fn is_read_api(name: &str) -> bool {
+    matches!(
+        name,
+        "info"
+            | "ping"
+            | "get"
+            | "get_source"
+            | "exists"
+            | "exists_source"
+            | "search"
+            | "count"
+            | "mget"
+            | "msearch"
+            | "indices.get"
+            | "indices.exists"
+            | "indices.get_mapping"
+            | "indices.get_field_mapping"
+            | "indices.get_settings"
+            | "indices.stats"
+            | "indices.exists_index_template"
+            | "indices.get_index_template"
+            | "indices.exists_alias"
+            | "indices.get_alias"
+            | "cluster.health"
+            | "cluster.get_settings"
+            | "nodes.info"
+            | "nodes.stats"
+            | "cat.indices"
+    ) || name.starts_with("cat.")
 }
 
 fn tier_for(name: &str, methods: &[String]) -> &'static str {
