@@ -10,6 +10,7 @@
   "expected": {
     "status": 200,
     "tier": "mocked",
-    "must_not_mutate": true
+    "must_not_mutate": true,
+    "minimum_live_score": 0.66
   }
 }

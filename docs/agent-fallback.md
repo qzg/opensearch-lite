@@ -64,7 +64,10 @@ cargo run -- \
 ```
 
 The live backend tests are intentionally ignored because they use network and
-paid model calls. To exercise the real fallback backend:
+paid model calls. They include smoke checks plus the benchmark fixture
+regression suite, which grades each fixture and fails with per-check reasons
+when the configured runtime model falls below the fixture threshold. To
+exercise the real fallback backend:
 
 ```sh
 set -a

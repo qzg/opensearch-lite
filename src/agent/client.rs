@@ -107,7 +107,9 @@ impl HttpAgentClient {
         let body = serde_json::json!({
             "model": self.config.model.as_deref().unwrap_or("opensearch-lite-fallback"),
             "messages": prompt::messages(&context),
-            "temperature": 0
+            "temperature": 0,
+            "max_tokens": 1600,
+            "response_format": { "type": "json_object" }
         });
         let response = request.json(&body).send().await.map_err(|error| {
             AgentError::new(

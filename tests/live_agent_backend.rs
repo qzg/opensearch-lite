@@ -6,6 +6,9 @@ use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Uri};
 use opensearch_lite::{
     agent::{
+        benchmark::{
+            fixture_context, grade_agent_output, load_fixtures, FixtureCheck, FixtureGrade,
+        },
         client::AgentClient,
         context::AgentRequestContext,
         tools::tool_catalog,
@@ -16,6 +19,8 @@ use opensearch_lite::{
     Config,
 };
 use serde_json::{json, Value};
+use std::path::Path;
+use tokio::time::sleep;
 
 const DEFAULT_OPENROUTER_ENDPOINT: &str = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek/deepseek-v4-flash";
@@ -60,7 +65,7 @@ async fn live_deepseek_backend_can_commit_legacy_template_through_tool_boundary(
     }
     let state = AppState::new(live_agent_config(true)).expect("live agent state initializes");
 
-    let response = call(
+    let response = call_with_live_retries(
         &state,
         Method::PUT,
         "/_template/live-agent-deepseek",
@@ -79,12 +84,105 @@ async fn live_deepseek_backend_can_commit_legacy_template_through_tool_boundary(
         .unwrap_or(false));
 }
 
+#[tokio::test]
+#[ignore = "requires paid/network OpenAI-compatible backend credentials"]
+async fn live_deepseek_backend_satisfies_agent_fallback_fixture_contracts() {
+    if !live_agent_tests_enabled() {
+        return;
+    }
+    let config = live_agent_config(true);
+    let client = AgentClient::from_config(&config.agent);
+    let fixtures =
+        load_fixtures(Path::new("fixtures/agent_fallback")).expect("agent fallback fixtures load");
+    let mut failures = Vec::new();
+
+    for fixture in fixtures {
+        let minimum_score = fixture
+            .expected
+            .get("minimum_live_score")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0);
+        let grade = complete_and_grade_fixture(&client, &fixture).await;
+
+        if !grade.valid_wrapper || grade.score + f64::EPSILON < minimum_score {
+            failures.push(format_fixture_failure(&fixture.id, minimum_score, &grade));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "live agent fixture contract failures:\n{}",
+        failures.join("\n\n")
+    );
+}
+
+async fn complete_and_grade_fixture(
+    client: &AgentClient,
+    fixture: &opensearch_lite::agent::benchmark::BenchmarkFixture,
+) -> FixtureGrade {
+    let mut last_error = None;
+    for attempt in 1..=3 {
+        match client.complete_raw(fixture_context(fixture)).await {
+            Ok(wrapper) => {
+                let raw = serde_json::to_string(&wrapper)
+                    .expect("agent response wrapper serializes for grading");
+                return grade_agent_output(fixture, &raw);
+            }
+            Err(error) => {
+                let retryable = is_retryable_agent_error(&error.reason);
+                last_error = Some(error.reason);
+                if retryable && attempt < 3 {
+                    sleep(Duration::from_millis(500 * attempt)).await;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    FixtureGrade {
+        fixture_id: fixture.id.clone(),
+        valid_wrapper: false,
+        score: 0.0,
+        checks: vec![FixtureCheck {
+            name: "live_agent_call".to_string(),
+            passed: false,
+            reason: format!(
+                "live backend request failed after retries: {}",
+                last_error.unwrap_or_else(|| "unknown error".to_string())
+            ),
+        }],
+    }
+}
+
+fn is_retryable_agent_error(reason: &str) -> bool {
+    reason.contains("HTTP 429")
+        || reason.contains("Too Many Requests")
+        || reason.contains("endpoint request failed")
+        || reason.contains("non-JSON response")
+}
+
 fn live_agent_tests_enabled() -> bool {
     if env::var("OPENSEARCH_LITE_LIVE_AGENT_TEST").ok().as_deref() == Some("1") {
         return true;
     }
     eprintln!("skipping live agent backend test; set OPENSEARCH_LITE_LIVE_AGENT_TEST=1");
     false
+}
+
+fn format_fixture_failure(fixture_id: &str, minimum_score: f64, grade: &FixtureGrade) -> String {
+    let failed_checks = grade
+        .checks
+        .iter()
+        .filter(|check| !check.passed)
+        .map(|check| format!("  - {}: {}", check.name, check.reason))
+        .collect::<Vec<_>>();
+    format!(
+        "{fixture_id}: score {:.3} below minimum {:.3}, valid_wrapper={}\n{}",
+        grade.score,
+        minimum_score,
+        grade.valid_wrapper,
+        failed_checks.join("\n")
+    )
 }
 
 fn live_agent_config(write_enabled: bool) -> Config {
@@ -128,4 +226,36 @@ async fn call(
     }
     let request = Request::from_parts(method, path.parse::<Uri>().unwrap(), headers, body);
     router::handle(state.clone(), request).await
+}
+
+async fn call_with_live_retries(
+    state: &AppState,
+    method: Method,
+    path: &str,
+    body: Value,
+) -> opensearch_lite::responses::Response {
+    let mut response = call(state, method.clone(), path, body.clone()).await;
+    for attempt in 1..=3 {
+        if !is_retryable_agent_provider_failure(&response) || attempt == 3 {
+            return response;
+        }
+        sleep(Duration::from_secs(2 * attempt)).await;
+        response = call(state, method.clone(), path, body.clone()).await;
+    }
+    response
+}
+
+fn is_retryable_agent_provider_failure(response: &opensearch_lite::responses::Response) -> bool {
+    let Some(reason) = response
+        .body
+        .as_ref()
+        .and_then(|body| body.pointer("/error/reason"))
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    reason.contains("HTTP 429")
+        || reason.contains("Too Many Requests")
+        || reason.contains("endpoint request failed")
+        || reason.contains("non-JSON response")
 }

@@ -1,5 +1,8 @@
 use opensearch_lite::{
-    agent::validation::{validate_wrapper, AgentResponseWrapper},
+    agent::{
+        tools::AgentToolCall,
+        validation::{validate_wrapper, AgentResponseWrapper},
+    },
     Config,
 };
 use serde_json::json;
@@ -33,4 +36,20 @@ fn wrapper_validation_rejects_write_intent() {
 
     let error = validate_wrapper(&raw, 75, 4096).unwrap_err();
     assert!(error.reason.contains("write intent"));
+}
+
+#[test]
+fn agent_tool_call_accepts_openai_function_shape() {
+    let call: AgentToolCall = serde_json::from_value(json!({
+        "id": "call_1",
+        "type": "function",
+        "function": {
+            "name": "commit_mutations",
+            "arguments": "{\"mutations\":[]}"
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(call.name, "commit_mutations");
+    assert_eq!(call.arguments["mutations"], json!([]));
 }
