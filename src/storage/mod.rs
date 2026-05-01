@@ -379,6 +379,7 @@ fn load_durable_state(
         ));
     };
     *db = snapshot_db;
+    db.recompute_store_sizes();
     validate_loaded_database_memory(db, memory_limit_bytes)?;
     if metadata.log_compacted {
         mutation_log::replay_validating(mutation_log_path, db, |db| {
@@ -642,17 +643,15 @@ impl Store {
                 match self
                     .prepare_write_operation(&candidate, operation)
                     .and_then(|prepared| {
-                        let mut operation_candidate = candidate.clone();
                         for mutation in &prepared.mutations {
-                            self.validate_mutation(&operation_candidate, mutation)?;
-                            mutation.apply_to(&mut operation_candidate);
-                            self.validate_memory(&operation_candidate)?;
+                            self.validate_mutation(&candidate, mutation)?;
+                            self.validate_memory_after_mutation(&candidate, mutation)?;
+                            mutation.apply_to(&mut candidate);
                         }
-                        let outcome = prepared.outcome.resolve(&operation_candidate)?;
-                        Ok((operation_candidate, prepared.mutations, outcome))
+                        let outcome = prepared.outcome.resolve(&candidate)?;
+                        Ok((prepared.mutations, outcome))
                     }) {
-                    Ok((operation_candidate, mutations, outcome)) => {
-                        candidate = operation_candidate;
+                    Ok((mutations, outcome)) => {
                         committed_mutations.extend(mutations);
                         results.push(Ok(outcome));
                     }
@@ -1403,6 +1402,23 @@ impl Store {
 
     fn validate_memory(&self, db: &Database) -> StoreResult<()> {
         let bytes = estimate_database_bytes(db);
+        self.validate_memory_bytes(bytes)
+    }
+
+    fn validate_memory_after_mutation(
+        &self,
+        db: &Database,
+        mutation: &Mutation,
+    ) -> StoreResult<()> {
+        let bytes = estimate_database_bytes_after_mutation(db, mutation).unwrap_or_else(|| {
+            let mut candidate = db.clone();
+            mutation.apply_to(&mut candidate);
+            estimate_database_bytes(&candidate)
+        });
+        self.validate_memory_bytes(bytes)
+    }
+
+    fn validate_memory_bytes(&self, bytes: usize) -> StoreResult<()> {
         if bytes > self.limits.memory_limit_bytes {
             return Err(StoreError::new(
                 429,
@@ -1445,6 +1461,12 @@ impl Database {
             .values()
             .map(|index| index.documents.len())
             .sum()
+    }
+
+    fn recompute_store_sizes(&mut self) {
+        for index in self.indexes.values_mut() {
+            index.recompute_store_size();
+        }
     }
 }
 
@@ -1513,21 +1535,8 @@ fn template_config_for(db: &Database, index_name: &str) -> (Value, Value) {
 
 fn estimate_database_bytes(db: &Database) -> usize {
     let mut bytes = 128usize;
-    for (name, index) in &db.indexes {
-        bytes = bytes.saturating_add(name.len());
-        bytes = bytes.saturating_add(estimate_value_bytes(&index.settings));
-        bytes = bytes.saturating_add(estimate_value_bytes(&index.mappings));
-        for alias in &index.aliases {
-            bytes = bytes.saturating_add(alias.len());
-        }
-        for (id, document) in &index.documents {
-            bytes = bytes.saturating_add(id.len());
-            bytes = bytes.saturating_add(64);
-            bytes = bytes.saturating_add(estimate_value_bytes(&document.source));
-        }
-        for id in index.tombstones.keys() {
-            bytes = bytes.saturating_add(id.len()).saturating_add(16);
-        }
+    for index in db.indexes.values() {
+        bytes = bytes.saturating_add(index.store_size_bytes);
     }
     for template in db.templates.values() {
         bytes = bytes.saturating_add(template.name.len());
@@ -1546,6 +1555,106 @@ fn estimate_database_bytes(db: &Database) -> usize {
         }
     }
     bytes
+}
+
+fn estimate_database_bytes_after_mutation(db: &Database, mutation: &Mutation) -> Option<usize> {
+    let current = estimate_database_bytes(db);
+    let delta = estimate_mutation_size_delta(db, mutation)?;
+    Some(delta.apply(current))
+}
+
+fn estimate_mutation_size_delta(db: &Database, mutation: &Mutation) -> Option<SizeDelta> {
+    match mutation {
+        Mutation::CreateIndex {
+            name,
+            settings,
+            mappings,
+        } => {
+            let index = IndexMetadata::new(name.clone(), settings.clone(), mappings.clone());
+            Some(SizeDelta::add(estimate_index_bytes(&index)))
+        }
+        Mutation::IndexDocument { index, id, source } => {
+            let index = db.indexes.get(index)?;
+            let mut delta = SizeDelta::add(estimate_document_bytes(id, source));
+            if let Some(existing) = index.documents.get(id) {
+                delta = delta.subtract(estimate_document_bytes(id, &existing.source));
+            }
+            if index.tombstones.contains_key(id) {
+                delta = delta.subtract(estimate_tombstone_bytes(id));
+            }
+            Some(delta)
+        }
+        Mutation::CreateDocument { index, id, source } => {
+            let index = db.indexes.get(index)?;
+            if index.documents.contains_key(id) {
+                return Some(SizeDelta::default());
+            }
+            let mut delta = SizeDelta::add(estimate_document_bytes(id, source));
+            if index.tombstones.contains_key(id) {
+                delta = delta.subtract(estimate_tombstone_bytes(id));
+            }
+            Some(delta)
+        }
+        Mutation::UpdateDocument {
+            index,
+            id,
+            doc,
+            doc_as_upsert,
+        } => {
+            let index = db.indexes.get(index)?;
+            let mut source = match index.documents.get(id) {
+                Some(document) => document.source.clone(),
+                None if *doc_as_upsert => json!({}),
+                None => return Some(SizeDelta::default()),
+            };
+            merge_object(&mut source, doc);
+            let mut delta = SizeDelta::add(estimate_document_bytes(id, &source));
+            if let Some(existing) = index.documents.get(id) {
+                delta = delta.subtract(estimate_document_bytes(id, &existing.source));
+            }
+            if index.tombstones.contains_key(id) {
+                delta = delta.subtract(estimate_tombstone_bytes(id));
+            }
+            Some(delta)
+        }
+        Mutation::DeleteDocument { index, id } => {
+            let index = db.indexes.get(index)?;
+            let Some(existing) = index.documents.get(id) else {
+                return Some(SizeDelta::default());
+            };
+            Some(
+                SizeDelta::add(estimate_tombstone_bytes(id))
+                    .subtract(estimate_document_bytes(id, &existing.source)),
+            )
+        }
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SizeDelta {
+    add: usize,
+    subtract: usize,
+}
+
+impl SizeDelta {
+    fn add(bytes: usize) -> Self {
+        Self {
+            add: bytes,
+            subtract: 0,
+        }
+    }
+
+    fn subtract(mut self, bytes: usize) -> Self {
+        self.subtract = self.subtract.saturating_add(bytes);
+        self
+    }
+
+    fn apply(self, current: usize) -> usize {
+        current
+            .saturating_sub(self.subtract)
+            .saturating_add(self.add)
+    }
 }
 
 fn estimate_index_bytes(index: &IndexMetadata) -> usize {

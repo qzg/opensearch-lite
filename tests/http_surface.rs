@@ -1141,6 +1141,52 @@ async fn memory_limit_rejects_large_persistent_state() {
 }
 
 #[tokio::test]
+async fn bulk_memory_failure_does_not_commit_failed_item() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.memory_limit_bytes = 700;
+    config.max_body_bytes = 4_000;
+    let state = AppState::new(config).unwrap();
+
+    let body = format!(
+        "{{\"index\":{{\"_index\":\"limited\",\"_id\":\"1\"}}}}\n{{\"payload\":\"ok\"}}\n\
+         {{\"index\":{{\"_index\":\"limited\",\"_id\":\"2\"}}}}\n{{\"payload\":\"{}\"}}\n\
+         {{\"index\":{{\"_index\":\"limited\",\"_id\":\"3\"}}}}\n{{\"payload\":\"ok\"}}\n",
+        "x".repeat(900)
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "content-type",
+        HeaderValue::from_static("application/x-ndjson"),
+    );
+
+    let response = raw_call(&state, Method::POST, "/_bulk", headers, Bytes::from(body)).await;
+
+    assert_eq!(response.status, 200);
+    let body = response.body.unwrap();
+    assert_eq!(body["errors"], true);
+    assert_eq!(body["items"][1]["index"]["status"], 429);
+    assert_eq!(
+        call(&state, Method::GET, "/limited/_doc/1", Value::Null)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(
+        call(&state, Method::GET, "/limited/_doc/2", Value::Null)
+            .await
+            .status,
+        404
+    );
+    assert_eq!(
+        call(&state, Method::GET, "/limited/_doc/3", Value::Null)
+            .await
+            .status,
+        200
+    );
+}
+
+#[tokio::test]
 async fn update_failure_does_not_create_index_and_upsert_honors_document_limit() {
     let state = ephemeral_state();
     let missing = call(
