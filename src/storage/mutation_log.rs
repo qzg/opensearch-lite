@@ -76,6 +76,11 @@ pub enum Mutation {
         index: String,
         id: String,
     },
+    RenameDocument {
+        index: String,
+        old_id: String,
+        new_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

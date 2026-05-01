@@ -20,7 +20,7 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{config::Config, storage::mutation_log::Mutation};
+use crate::{config::Config, rest_path::decode_path_param, storage::mutation_log::Mutation};
 
 const MUTATION_LOG_SYNC_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -349,7 +349,14 @@ fn load_durable_state(
         mutation_log::replay_validating(mutation_log_path, db, |db| {
             validate_loaded_database_memory(db, memory_limit_bytes)
         })?;
-        return Ok(SnapshotFlushState::default());
+        let mut state = SnapshotFlushState::default();
+        repair_dashboards_encoded_document_ids(
+            mutation_log_path,
+            memory_limit_bytes,
+            db,
+            &mut state,
+        )?;
+        return Ok(state);
     };
     let snapshot_path = metadata
         .snapshot_file
@@ -385,12 +392,87 @@ fn load_durable_state(
             |db| validate_loaded_database_memory(db, memory_limit_bytes),
         )?;
     }
-    Ok(SnapshotFlushState {
+    let mut state = SnapshotFlushState {
         dirty_writes: 0,
         dirty_since: None,
         generation: metadata.generation,
         last_transaction_id: metadata.last_transaction_id,
-    })
+    };
+    repair_dashboards_encoded_document_ids(mutation_log_path, memory_limit_bytes, db, &mut state)?;
+    Ok(state)
+}
+
+fn repair_dashboards_encoded_document_ids(
+    mutation_log_path: &std::path::Path,
+    memory_limit_bytes: usize,
+    db: &mut Database,
+    snapshot_state: &mut SnapshotFlushState,
+) -> io::Result<()> {
+    let mutations = plan_dashboards_encoded_document_id_repairs(db);
+    if mutations.is_empty() {
+        return Ok(());
+    }
+
+    let transaction_id = transaction_id();
+    mutation_log::append_transaction_begin(mutation_log_path, &transaction_id, &mutations)?;
+    mutation_log::append_transaction_commit(mutation_log_path, &transaction_id)?;
+    for mutation in &mutations {
+        mutation.apply_to(db);
+        validate_loaded_database_memory(db, memory_limit_bytes)?;
+    }
+    mutation_log::sync(mutation_log_path)?;
+    snapshot_state.dirty_writes = snapshot_state.dirty_writes.saturating_add(mutations.len());
+    snapshot_state.dirty_since = Some(SystemTime::now());
+    snapshot_state.last_transaction_id = Some(transaction_id);
+    eprintln!(
+        "opensearch-lite repaired {} legacy Dashboards saved-object document IDs from encoded path form",
+        mutations.len()
+    );
+    Ok(())
+}
+
+fn plan_dashboards_encoded_document_id_repairs(db: &Database) -> Vec<Mutation> {
+    let mut mutations = Vec::new();
+    for (index_name, index) in &db.indexes {
+        if !is_dashboards_saved_object_index(index_name) {
+            continue;
+        }
+
+        let mut planned_ids = BTreeSet::new();
+        for id in index.documents.keys() {
+            let decoded = decode_path_param(id);
+            if decoded == *id || !is_saved_object_document_id(&decoded) {
+                continue;
+            }
+            if index.documents.contains_key(&decoded) || !planned_ids.insert(decoded.clone()) {
+                eprintln!(
+                    "opensearch-lite skipped legacy Dashboards saved-object ID repair for [{index_name}/{id}] because decoded ID [{decoded}] already exists"
+                );
+                continue;
+            }
+            mutations.push(Mutation::RenameDocument {
+                index: index_name.clone(),
+                old_id: id.clone(),
+                new_id: decoded,
+            });
+        }
+    }
+    mutations
+}
+
+fn is_dashboards_saved_object_index(index: &str) -> bool {
+    index == ".kibana"
+        || index.starts_with(".kibana_")
+        || index.starts_with(".kibana-")
+        || index == ".opensearch_dashboards"
+        || index.starts_with(".opensearch_dashboards_")
+        || index.starts_with(".opensearch_dashboards-")
+}
+
+fn is_saved_object_document_id(id: &str) -> bool {
+    id.split_once(':')
+        .map(|(object_type, object_id)| !object_type.is_empty() && !object_id.is_empty())
+        .unwrap_or(false)
 }
 
 fn snapshot_metadata(
@@ -1246,6 +1328,31 @@ impl Store {
                     ));
                 }
             }
+            Mutation::RenameDocument {
+                index,
+                old_id,
+                new_id,
+            } => {
+                let Some(index_meta) = db.indexes.get(index) else {
+                    return Err(not_found(
+                        "index_not_found_exception",
+                        format!("no such index [{index}]"),
+                    ));
+                };
+                if !index_meta.documents.contains_key(old_id) {
+                    return Err(not_found(
+                        "document_missing_exception",
+                        format!("document [{old_id}] missing"),
+                    ));
+                }
+                if index_meta.documents.contains_key(new_id) {
+                    return Err(StoreError::new(
+                        409,
+                        "version_conflict_engine_exception",
+                        format!("document [{new_id}] already exists"),
+                    ));
+                }
+            }
             Mutation::PutMapping { index, .. } | Mutation::PutSettings { index, .. } => {
                 if !db.indexes.contains_key(index) {
                     return Err(not_found(
@@ -1726,6 +1833,22 @@ impl Mutation {
                             .saturating_sub(estimate_document_bytes(id, &document.source))
                             .saturating_add(estimate_tombstone_bytes(id));
                         index_meta.tombstones.insert(id.clone(), db.seq_no);
+                    }
+                }
+            }
+            Mutation::RenameDocument {
+                index,
+                old_id,
+                new_id,
+            } => {
+                if let Some(index_meta) = db.indexes.get_mut(index) {
+                    if index_meta.documents.contains_key(new_id) {
+                        return;
+                    }
+                    if let Some(mut document) = index_meta.documents.remove(old_id) {
+                        document.id = new_id.clone();
+                        index_meta.documents.insert(new_id.clone(), document);
+                        index_meta.recompute_store_size();
                     }
                 }
             }

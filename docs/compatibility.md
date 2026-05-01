@@ -91,9 +91,16 @@ based on the pinned OpenSearch Dashboards 3.7.0 source signals recorded in
 A first Docker smoke with OpenSearch Dashboards 3.6.0 now reaches green status
 with security disabled and has passed synthetic data-view field discovery,
 saved-object index-pattern create, and Discover-style `_msearch` route probes.
-This is still not a full live Dashboards support claim. Browser-driven saved
-object, Discover, visualization, import/export, and migration flows remain the
-next compatibility boundary.
+A follow-up Docker smoke also created saved objects through Dashboards' HTTP API
+and exported/imported a data view, saved search, visualization, and dashboard
+with deep references intact. A durable restart smoke then replayed that
+saved-object state, let Dashboards complete migrations, and read the imported
+dashboard through Dashboards' saved-object API. Checked-in fixtures now cover
+the corresponding OpenSearch traffic for overwrite-false import conflicts,
+create-new-copy saved-object imports, and an older
+`.opensearch_dashboards*` reindex/alias migration restart. This is still not a
+full live Dashboards support claim. Browser-driven conflict flows and broader
+older migration edge cases remain the next compatibility boundary.
 
 ## Query Guardrails
 
@@ -120,6 +127,11 @@ the metadata file exposes generation, estimated stored bytes, index/document
 counts, registry object count, and log high-water information without parsing
 all document bodies. Snapshots are dirty-threshold based rather than rewritten
 after every write.
+
+On startup, durable mode also repairs legacy Dashboards saved-object IDs that
+were previously stored in encoded path form, such as
+`index-pattern%3Aorders`, by renaming them to the decoded OpenSearch document
+ID form used by Dashboards reference lookups.
 
 Treat these files as local development artifacts. They may contain document
 content; do not mount or expose them across trust boundaries unless that data

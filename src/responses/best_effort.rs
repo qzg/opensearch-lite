@@ -51,43 +51,44 @@ pub fn nodes_info(
         .compatibility_signal(api_name, "best_effort")
 }
 
-pub fn nodes_stats(
-    api_name: &str,
-    advertised_version: &str,
-    node_ip: &str,
-    publish_address: &str,
-    docs: usize,
-    deleted: usize,
-    store_bytes: usize,
-    filter_path: Option<&str>,
-) -> Response {
+pub struct NodesStatsMetadata<'a> {
+    pub advertised_version: &'a str,
+    pub node_ip: &'a str,
+    pub publish_address: &'a str,
+    pub docs: usize,
+    pub deleted: usize,
+    pub store_bytes: usize,
+    pub filter_path: Option<&'a str>,
+}
+
+pub fn nodes_stats(api_name: &str, metadata: NodesStatsMetadata<'_>) -> Response {
     let body = json!({
         "cluster_name": "opensearch-lite",
         "nodes": {
             "opensearch-lite-local-node": {
                 "name": "opensearch-lite",
-                "version": advertised_version,
-                "host": node_ip,
-                "ip": node_ip,
+                "version": metadata.advertised_version,
+                "host": metadata.node_ip,
+                "ip": metadata.node_ip,
                 "http": {
                     "current_open": 0,
                     "total_opened": 0,
-                    "publish_address": publish_address
+                    "publish_address": metadata.publish_address
                 },
                 "indices": {
                     "docs": {
-                        "count": docs,
-                        "deleted": deleted
+                        "count": metadata.docs,
+                        "deleted": metadata.deleted
                     },
                     "store": {
-                        "size_in_bytes": store_bytes,
+                        "size_in_bytes": metadata.store_bytes,
                         "reserved_in_bytes": 0
                     }
                 }
             }
         }
     });
-    Response::json(200, apply_filter_path(body, filter_path))
+    Response::json(200, apply_filter_path(body, metadata.filter_path))
         .compatibility_signal(api_name, "best_effort")
 }
 

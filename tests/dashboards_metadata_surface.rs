@@ -1,9 +1,14 @@
 mod support;
 
 use http::Method;
-use opensearch_lite::{server::AppState, Config};
+use opensearch_lite::{
+    server::AppState,
+    storage::mutation_log::{self, Mutation},
+    Config,
+};
 use serde_json::{json, Value};
-use support::{call, ephemeral_state};
+use std::fs;
+use support::{call, durable_state, ephemeral_state, ndjson_call};
 
 #[tokio::test]
 async fn dashboards_data_view_metadata_is_deterministic() {
@@ -158,11 +163,376 @@ async fn dashboards_data_view_metadata_is_deterministic() {
 }
 
 #[tokio::test]
+async fn dashboards_saved_object_reference_ids_round_trip_as_decoded_document_ids() {
+    let state = ephemeral_state();
+
+    let data_view = call(
+        &state,
+        Method::PUT,
+        "/.kibana/_create/index-pattern%3Aorders",
+        json!({
+            "type": "index-pattern",
+            "index-pattern": { "title": "orders", "timeFieldName": "created_at" },
+            "references": []
+        }),
+    )
+    .await;
+    assert_eq!(data_view.status, 201);
+    assert_eq!(data_view.body.unwrap()["_id"], "index-pattern:orders");
+
+    let visualization = call(
+        &state,
+        Method::PUT,
+        "/.kibana/_create/visualization%3Aorders-status-vis",
+        json!({
+            "type": "visualization",
+            "visualization": { "title": "Orders by status" },
+            "references": [
+                { "type": "index-pattern", "id": "orders", "name": "kibanaSavedObjectMeta.searchSourceJSON.index" }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(visualization.status, 201);
+    assert_eq!(
+        visualization.body.unwrap()["_id"],
+        "visualization:orders-status-vis"
+    );
+
+    let export_reference_lookup = call(
+        &state,
+        Method::POST,
+        "/_mget",
+        json!({
+            "docs": [
+                { "_index": ".kibana", "_id": "index-pattern:orders" },
+                { "_index": ".kibana", "_id": "visualization:orders-status-vis" }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(export_reference_lookup.status, 200);
+    let body = export_reference_lookup.body.unwrap();
+    assert_eq!(body["docs"][0]["found"], true);
+    assert_eq!(body["docs"][0]["_id"], "index-pattern:orders");
+    assert_eq!(body["docs"][1]["found"], true);
+    assert_eq!(body["docs"][1]["_id"], "visualization:orders-status-vis");
+}
+
+#[tokio::test]
+async fn dashboards_saved_object_import_bulk_survives_durable_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = durable_state(temp.path());
+
+    let index = call(&state, Method::PUT, "/.kibana_1", json!({})).await;
+    assert_eq!(index.status, 200);
+    let alias = call(
+        &state,
+        Method::POST,
+        "/_aliases",
+        json!({
+            "actions": [
+                { "add": { "index": ".kibana_1", "alias": ".kibana" } }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(alias.status, 200);
+
+    let import = ndjson_call(
+        &state,
+        Method::POST,
+        "/_bulk?refresh=wait_for",
+        r#"{"index":{"_index":".kibana","_id":"index-pattern:orders"}}
+{"type":"index-pattern","index-pattern":{"title":"orders","timeFieldName":"created_at"},"references":[]}
+{"index":{"_index":".kibana","_id":"visualization:orders-status-vis"}}
+{"type":"visualization","visualization":{"title":"Orders by status"},"references":[{"type":"index-pattern","id":"orders","name":"kibanaSavedObjectMeta.searchSourceJSON.index"}]}
+{"index":{"_index":".kibana","_id":"dashboard:orders-dashboard"}}
+{"type":"dashboard","dashboard":{"title":"Orders dashboard"},"references":[{"type":"visualization","id":"orders-status-vis","name":"panel_0"}]}
+"#,
+    )
+    .await;
+    assert_eq!(import.status, 200);
+    let body = import.body.unwrap();
+    assert_eq!(body["errors"], false);
+    assert_eq!(body["items"].as_array().unwrap().len(), 3);
+
+    let count = call(
+        &state,
+        Method::POST,
+        "/.kibana/_count",
+        json!({ "query": { "match_all": {} } }),
+    )
+    .await;
+    assert_eq!(count.status, 200);
+    assert_eq!(count.body.unwrap()["count"], 3);
+
+    drop(state);
+
+    let replayed = durable_state(temp.path());
+    let dashboard = call(
+        &replayed,
+        Method::GET,
+        "/.kibana/_doc/dashboard%3Aorders-dashboard",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(dashboard.status, 200);
+    let body = dashboard.body.unwrap();
+    assert_eq!(body["_id"], "dashboard:orders-dashboard");
+    assert_eq!(body["_source"]["dashboard"]["title"], "Orders dashboard");
+    assert_eq!(
+        body["_source"]["references"],
+        json!([{ "type": "visualization", "id": "orders-status-vis", "name": "panel_0" }])
+    );
+
+    let reference_lookup = call(
+        &replayed,
+        Method::POST,
+        "/_mget",
+        json!({
+            "docs": [
+                { "_index": ".kibana", "_id": "index-pattern:orders" },
+                { "_index": ".kibana", "_id": "visualization:orders-status-vis" }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(reference_lookup.status, 200);
+    let body = reference_lookup.body.unwrap();
+    assert_eq!(body["docs"][0]["found"], true);
+    assert_eq!(body["docs"][0]["_source"]["references"], json!([]));
+    assert_eq!(body["docs"][1]["found"], true);
+    assert_eq!(
+        body["docs"][1]["_source"]["references"],
+        json!([{ "type": "index-pattern", "id": "orders", "name": "kibanaSavedObjectMeta.searchSourceJSON.index" }])
+    );
+
+    let replayed_count = call(
+        &replayed,
+        Method::POST,
+        "/.kibana/_count",
+        json!({ "query": { "match_all": {} } }),
+    )
+    .await;
+    assert_eq!(replayed_count.status, 200);
+    assert_eq!(replayed_count.body.unwrap()["count"], 3);
+}
+
+#[tokio::test]
+async fn dashboards_saved_object_import_conflict_modes_match_bulk_traffic() {
+    let state = ephemeral_state();
+
+    let index = call(&state, Method::PUT, "/.kibana_1", json!({})).await;
+    assert_eq!(index.status, 200);
+    let alias = call(
+        &state,
+        Method::POST,
+        "/_aliases",
+        json!({
+            "actions": [
+                { "add": { "index": ".kibana_1", "alias": ".kibana" } }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(alias.status, 200);
+
+    let original = call(
+        &state,
+        Method::PUT,
+        "/.kibana/_create/dashboard%3Aorders-dashboard?refresh=wait_for",
+        json!({
+            "type": "dashboard",
+            "dashboard": { "title": "Original dashboard" },
+            "references": []
+        }),
+    )
+    .await;
+    assert_eq!(original.status, 201);
+
+    let overwrite_false = ndjson_call(
+        &state,
+        Method::POST,
+        "/_bulk?refresh=wait_for",
+        r#"{"create":{"_index":".kibana","_id":"dashboard:orders-dashboard"}}
+{"type":"dashboard","dashboard":{"title":"Imported dashboard"},"references":[]}
+"#,
+    )
+    .await;
+    assert_eq!(overwrite_false.status, 200);
+    let body = overwrite_false.body.unwrap();
+    assert_eq!(body["errors"], true);
+    assert_eq!(body["items"][0]["create"]["status"], 409);
+
+    let existing = call(
+        &state,
+        Method::GET,
+        "/.kibana/_doc/dashboard%3Aorders-dashboard",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(existing.status, 200);
+    assert_eq!(
+        existing.body.unwrap()["_source"]["dashboard"]["title"],
+        "Original dashboard"
+    );
+
+    let create_new_copies = ndjson_call(
+        &state,
+        Method::POST,
+        "/_bulk?refresh=wait_for",
+        r#"{"index":{"_index":".kibana","_id":"index-pattern:orders-copy"}}
+{"type":"index-pattern","index-pattern":{"title":"orders-copy"},"references":[]}
+{"index":{"_index":".kibana","_id":"dashboard:orders-dashboard-copy"}}
+{"type":"dashboard","dashboard":{"title":"Imported dashboard copy"},"references":[{"type":"index-pattern","id":"orders-copy","name":"kibanaSavedObjectMeta.searchSourceJSON.index"}]}
+"#,
+    )
+    .await;
+    assert_eq!(create_new_copies.status, 200);
+    let body = create_new_copies.body.unwrap();
+    assert_eq!(body["errors"], false);
+    assert_eq!(body["items"][0]["index"]["status"], 201);
+    assert_eq!(body["items"][1]["index"]["status"], 201);
+
+    let copied = call(
+        &state,
+        Method::POST,
+        "/_mget",
+        json!({
+            "docs": [
+                { "_index": ".kibana", "_id": "dashboard:orders-dashboard" },
+                { "_index": ".kibana", "_id": "dashboard:orders-dashboard-copy" },
+                { "_index": ".kibana", "_id": "index-pattern:orders-copy" }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(copied.status, 200);
+    let body = copied.body.unwrap();
+    assert_eq!(
+        body["docs"][0]["_source"]["dashboard"]["title"],
+        "Original dashboard"
+    );
+    assert_eq!(
+        body["docs"][1]["_source"]["dashboard"]["title"],
+        "Imported dashboard copy"
+    );
+    assert_eq!(
+        body["docs"][1]["_source"]["references"],
+        json!([{ "type": "index-pattern", "id": "orders-copy", "name": "kibanaSavedObjectMeta.searchSourceJSON.index" }])
+    );
+    assert_eq!(body["docs"][2]["found"], true);
+}
+
+#[tokio::test]
+async fn dashboards_legacy_encoded_saved_object_ids_are_repaired_on_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let mutation_log = temp.path().join("mutations.jsonl");
+    let legacy_mutations = vec![
+        Mutation::CreateIndex {
+            name: ".kibana_1".to_string(),
+            settings: json!({}),
+            mappings: json!({}),
+        },
+        Mutation::PutAlias {
+            index: ".kibana_1".to_string(),
+            alias: ".kibana".to_string(),
+            raw: json!({ "index": ".kibana_1", "alias": ".kibana" }),
+        },
+        Mutation::CreateDocument {
+            index: ".kibana_1".to_string(),
+            id: "index-pattern%3Aorders".to_string(),
+            source: json!({
+                "type": "index-pattern",
+                "index-pattern": { "title": "orders", "timeFieldName": "created_at" },
+                "references": []
+            }),
+        },
+        Mutation::CreateDocument {
+            index: ".kibana_1".to_string(),
+            id: "dashboard%3Aorders-dashboard".to_string(),
+            source: json!({
+                "type": "dashboard",
+                "dashboard": { "title": "Orders dashboard" },
+                "references": [
+                    { "type": "index-pattern", "id": "orders", "name": "kibanaSavedObjectMeta.searchSourceJSON.index" }
+                ]
+            }),
+        },
+    ];
+    mutation_log::append_transaction_begin(&mutation_log, "legacy-encoded-ids", &legacy_mutations)
+        .unwrap();
+    mutation_log::append_transaction_commit(&mutation_log, "legacy-encoded-ids").unwrap();
+
+    let state = durable_state(temp.path());
+    let dashboard = call(
+        &state,
+        Method::GET,
+        "/.kibana/_doc/dashboard%3Aorders-dashboard",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(dashboard.status, 200);
+    let body = dashboard.body.unwrap();
+    assert_eq!(body["_id"], "dashboard:orders-dashboard");
+    assert_eq!(body["_source"]["dashboard"]["title"], "Orders dashboard");
+    assert_eq!(
+        body["_source"]["references"][0]["id"], "orders",
+        "repair must preserve saved-object references"
+    );
+
+    let reference_lookup = call(
+        &state,
+        Method::POST,
+        "/_mget",
+        json!({
+            "docs": [
+                { "_index": ".kibana", "_id": "index-pattern:orders" },
+                { "_index": ".kibana", "_id": "dashboard:orders-dashboard" }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(reference_lookup.status, 200);
+    let body = reference_lookup.body.unwrap();
+    assert_eq!(body["docs"][0]["found"], true);
+    assert_eq!(body["docs"][1]["found"], true);
+
+    let legacy_lookup = call(
+        &state,
+        Method::POST,
+        "/_mget",
+        json!({ "docs": [{ "_index": ".kibana", "_id": "index-pattern%3Aorders" }] }),
+    )
+    .await;
+    assert_eq!(legacy_lookup.status, 200);
+    assert_eq!(legacy_lookup.body.unwrap()["docs"][0]["found"], false);
+
+    let log = fs::read_to_string(&mutation_log).unwrap();
+    assert!(log.contains("\"kind\":\"rename_document\""));
+
+    drop(state);
+    let replayed = durable_state(temp.path());
+    let replayed_lookup = call(
+        &replayed,
+        Method::POST,
+        "/_mget",
+        json!({ "docs": [{ "_index": ".kibana", "_id": "dashboard:orders-dashboard" }] }),
+    )
+    .await;
+    assert_eq!(replayed_lookup.status, 200);
+    assert_eq!(replayed_lookup.body.unwrap()["docs"][0]["found"], true);
+}
+
+#[tokio::test]
 async fn nodes_metadata_uses_configured_version_and_listener() {
-    let mut config = Config::default();
-    config.ephemeral = true;
-    config.advertised_version = "3.6.1-test".to_string();
-    config.listen = "127.0.0.2:9300".parse().unwrap();
+    let config = Config {
+        ephemeral: true,
+        advertised_version: "3.6.1-test".to_string(),
+        listen: "127.0.0.2:9300".parse().unwrap(),
+        ..Default::default()
+    };
     let state = AppState::new(config).unwrap();
 
     call(&state, Method::PUT, "/orders", json!({})).await;

@@ -2,7 +2,7 @@ mod support;
 
 use http::Method;
 use serde_json::{json, Value};
-use support::{call, ephemeral_state};
+use support::{call, durable_state, ephemeral_state};
 
 #[tokio::test]
 async fn scroll_and_clear_scroll_page_saved_object_reads() {
@@ -176,6 +176,86 @@ async fn reindex_records_completed_task_for_dashboards_polling() {
     .await;
     assert_eq!(dashboard.status, 200);
     assert_eq!(dashboard.body.unwrap()["_source"]["title"], "Sales");
+}
+
+#[tokio::test]
+async fn older_opensearch_dashboards_index_migration_survives_durable_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = durable_state(temp.path());
+    call(
+        &state,
+        Method::PUT,
+        "/.opensearch_dashboards/_doc/1",
+        json!({ "type": "dashboard", "title": "Sales", "references": [] }),
+    )
+    .await;
+    call(
+        &state,
+        Method::PUT,
+        "/.opensearch_dashboards/_doc/2",
+        json!({ "type": "visualization", "title": "Revenue", "references": [] }),
+    )
+    .await;
+
+    let reindex = call(
+        &state,
+        Method::POST,
+        "/_reindex?wait_for_completion=false&refresh=true",
+        json!({
+            "source": {
+                "index": ".opensearch_dashboards",
+                "size": 10
+            },
+            "dest": {
+                "index": ".opensearch_dashboards_1"
+            },
+            "script": {
+                "source": "ctx._id = ctx._source.type + ':' + ctx._id",
+                "lang": "painless"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(reindex.status, 200);
+    assert!(reindex.body.unwrap()["task"].as_str().is_some());
+
+    let alias = call(
+        &state,
+        Method::POST,
+        "/_aliases",
+        json!({
+            "actions": [
+                { "remove_index": { "index": ".opensearch_dashboards" } },
+                { "add": { "index": ".opensearch_dashboards_1", "alias": ".opensearch_dashboards" } }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(alias.status, 200);
+
+    drop(state);
+    let replayed = durable_state(temp.path());
+    let dashboard = call(
+        &replayed,
+        Method::GET,
+        "/.opensearch_dashboards/_doc/dashboard%3A1",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(dashboard.status, 200);
+    let body = dashboard.body.unwrap();
+    assert_eq!(body["_id"], "dashboard:1");
+    assert_eq!(body["_source"]["title"], "Sales");
+
+    let count = call(
+        &replayed,
+        Method::POST,
+        "/.opensearch_dashboards/_count",
+        json!({ "query": { "match_all": {} } }),
+    )
+    .await;
+    assert_eq!(count.status, 200);
+    assert_eq!(count.body.unwrap()["count"], 2);
 }
 
 #[tokio::test]

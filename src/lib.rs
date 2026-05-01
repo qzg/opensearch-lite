@@ -6,6 +6,7 @@ pub mod config;
 pub mod http;
 pub mod resources;
 pub mod responses;
+mod rest_path;
 pub mod runtime;
 pub mod search;
 pub mod security;

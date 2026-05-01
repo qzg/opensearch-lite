@@ -133,11 +133,53 @@ Observed OpenSearch API traffic during the successful smoke:
 - `PUT /.kibana/_create/index-pattern%3Aorders?refresh=wait_for`
 - `POST /_msearch?ignore_throttled=true&ignore_unavailable=true`
 
-Next live-surface work should move beyond boot and synthetic route probes into
-browser-driven flows: create a data view through the UI, open Discover, save a
-search, create a simple visualization/dashboard, and import/export saved
-objects. Those flows are likely to expose richer saved-object search and
-visualization aggregation edge cases.
+## Live Saved-Object Workflow Smoke: 2026-05-01
+
+The next Docker smoke reused OpenSearch Dashboards `3.6.0`, a local
+loopback-rewriting proxy, and the patched OpenSearch Lite binary. Dashboards
+again reached green status with saved-object migrations complete.
+
+The smoke then seeded an `orders` index, created saved objects through
+Dashboards' HTTP API, exported the resulting data view, saved search,
+visualization, and dashboard with `includeReferencesDeep=true`, deleted the
+saved-object documents, and imported the export file back through
+`POST /api/saved_objects/_import?overwrite=true`.
+
+Result: export returned `exportedCount: 4`, `missingRefCount: 0`, and no
+`missingReferences`. Import returned `success: true` and `successCount: 4`.
+The live gap found during the first workflow attempt was encoded saved-object
+IDs: Dashboards writes path IDs such as `index-pattern%3Aorders`, while
+reference lookups use raw IDs such as `index-pattern:orders`. OpenSearch Lite
+now percent-decodes document ID path parameters for document, source, and
+explain APIs so saved-object reference lookups resolve. Durable startup also
+repairs legacy `.kibana*` and `.opensearch_dashboards*` documents that were
+stored before this fix with literal encoded IDs.
+
+Observed additional OpenSearch API traffic during this workflow:
+
+- `PUT /.kibana/_create/search%3Apaid-orders-search?refresh=wait_for`
+- `PUT /.kibana/_create/visualization%3Aorders-status-vis?refresh=wait_for`
+- `PUT /.kibana/_create/dashboard%3Aorders-dashboard?refresh=wait_for`
+- `POST /.kibana/_search?size=10000&from=0&rest_total_hits_as_int=true`
+- `POST /_mget`
+- `POST /_bulk?refresh=wait_for`
+
+The same saved-object import was then run against a durable OpenSearch Lite
+data directory. After a clean Lite restart, OpenSearch Dashboards again reached
+green status, saved-object migrations completed, and
+`GET /api/saved_objects/dashboard/orders-dashboard` returned the imported
+dashboard. Restart traffic against existing `.kibana` state added:
+
+- `GET /.kibana`
+- `POST /.kibana/_count`
+- `GET /.kibana/_doc/dashboard%3Aorders-dashboard`
+
+Checked-in fixtures now preserve the OpenSearch traffic contracts for
+overwrite-false import conflicts, `createNewCopies`-style import writes, deep
+references after durable replay, and an older `.opensearch_dashboards*`
+reindex/alias migration restart. Next live-surface work should run the
+browser/API flows that produce those conflict states end to end and capture any
+additional route or response-shape gaps.
 
 ## Priority 2: Saved Object Migration Compatibility
 
@@ -227,7 +269,8 @@ scope.
 
 ## Suggested Next Tranche
 
-Run a live OpenSearch Dashboards smoke against OpenSearch Lite and capture the
+Run the next live OpenSearch Dashboards smoke against browser/API-level import
+conflict handling and older durable `.opensearch_dashboards*` state. Capture
 remaining route/shape failures as source-traceable fixtures. Likely follow-ups
 are migration edge-case response shapes, saved-object repository search
 variants, and any plugin startup metadata that appears in real traffic.

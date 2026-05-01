@@ -29,6 +29,7 @@ use crate::{
     },
     http::request::Request,
     responses::{acknowledged, best_effort, info, logging, open_search_error, Response},
+    rest_path::decode_path_param,
     search::{self as search_engine, dsl::SearchRequest},
     security,
     server::AppState,
@@ -107,7 +108,8 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
         return handle_bulk(&state, &request, path_index).await;
     }
     if parts.len() == 3 && parts.get(1) == Some(&"_source") {
-        return handle_source(&state, &request, parts[0], parts[2]);
+        let id = decode_path_param(parts[2]);
+        return handle_source(&state, &request, parts[0], &id);
     }
     if matches!(parts.as_slice(), ["_search"] | [_, "_search"]) {
         return handle_search(&state, &request, parts.first().copied());
@@ -210,7 +212,8 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
         return handle_alias(&state, &request, &parts).await;
     }
     if matches!(parts.as_slice(), [_, "_explain", _]) {
-        return handle_explain(&state, &request, parts[0], parts[2]);
+        let id = decode_path_param(parts[2]);
+        return handle_explain(&state, &request, parts[0], &id);
     }
     if parts.len() >= 2 && matches!(parts[1], "_doc" | "_create" | "_update") {
         return handle_document(&state, &request, &parts).await;
@@ -916,15 +919,18 @@ fn handle_nodes_stats(state: &AppState, request: &Request, api_name: &str) -> Re
     match stats {
         Ok((docs, deleted, store_bytes)) => {
             let node_ip = state.config.listen.ip().to_string();
+            let publish_address = state.config.listen.to_string();
             best_effort::nodes_stats(
                 api_name,
-                &state.config.advertised_version,
-                &node_ip,
-                &state.config.listen.to_string(),
-                docs,
-                deleted,
-                store_bytes,
-                request.query_value("filter_path"),
+                best_effort::NodesStatsMetadata {
+                    advertised_version: &state.config.advertised_version,
+                    node_ip: &node_ip,
+                    publish_address: &publish_address,
+                    docs,
+                    deleted,
+                    store_bytes,
+                    filter_path: request.query_value("filter_path"),
+                },
             )
         }
         Err(error) => store_error(error),
@@ -1583,7 +1589,8 @@ fn alias_exists_response(state: &AppState, index: Option<&str>, alias: &str) -> 
 async fn handle_document(state: &AppState, request: &Request, parts: &[&str]) -> Response {
     let index = parts[0];
     let action = parts[1];
-    let id = parts.get(2).copied();
+    let decoded_id = parts.get(2).map(|id| decode_path_param(id));
+    let id = decoded_id.as_deref();
     let valid_shape = match action {
         "_doc" => (parts.len() == 2 && request.method == Method::POST) || parts.len() == 3,
         "_create" => parts.len() == 3,

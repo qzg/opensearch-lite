@@ -53,6 +53,59 @@ async fn mget_reads_path_index_ids_and_mixed_docs() {
 }
 
 #[tokio::test]
+async fn document_id_path_parameters_are_percent_decoded() {
+    let state = ephemeral_state();
+
+    let create = call(
+        &state,
+        Method::PUT,
+        "/orders/_doc/order%3A1",
+        json!({ "status": "paid" }),
+    )
+    .await;
+    assert_eq!(create.status, 201);
+    assert_eq!(create.body.unwrap()["_id"], "order:1");
+
+    let get = call(&state, Method::GET, "/orders/_doc/order%3A1", Value::Null).await;
+    assert_eq!(get.status, 200);
+    let body = get.body.unwrap();
+    assert_eq!(body["_id"], "order:1");
+    assert_eq!(body["_source"]["status"], "paid");
+
+    let source = call(
+        &state,
+        Method::GET,
+        "/orders/_source/order%3A1",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(source.status, 200);
+    assert_eq!(source.body.unwrap()["status"], "paid");
+
+    let mget = call(
+        &state,
+        Method::POST,
+        "/_mget",
+        json!({ "docs": [{ "_index": "orders", "_id": "order:1" }] }),
+    )
+    .await;
+    assert_eq!(mget.status, 200);
+    assert_eq!(mget.body.unwrap()["docs"][0]["found"], true);
+
+    let explain = call(
+        &state,
+        Method::GET,
+        "/orders/_explain/order%3A1",
+        json!({ "query": { "term": { "status": "paid" } } }),
+    )
+    .await;
+    assert_eq!(explain.status, 200);
+    let body = explain.body.unwrap();
+    assert_eq!(body["_id"], "order:1");
+    assert_eq!(body["matched"], true);
+}
+
+#[tokio::test]
 async fn mget_applies_request_and_item_source_filtering() {
     let state = ephemeral_state();
     call(
