@@ -1,6 +1,7 @@
 mod support;
 
 use http::Method;
+use opensearch_lite::{server::AppState, Config};
 use serde_json::{json, Value};
 use support::{call, ephemeral_state};
 
@@ -122,6 +123,125 @@ async fn dashboards_data_view_metadata_is_deterministic() {
     assert_eq!(body["indices"]["count"], 1);
     assert_eq!(body["indices"]["docs"]["count"], 1);
     assert!(body["indices"]["store"]["size_in_bytes"].as_u64().unwrap() > 0);
+
+    let nodes = call(
+        &state,
+        Method::GET,
+        "/_nodes?filter_path=nodes.*.version,nodes.*.http.publish_address,nodes.*.ip",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(nodes.status, 200);
+    assert_eq!(
+        nodes
+            .headers
+            .get("x-opensearch-lite-api")
+            .map(String::as_str),
+        Some("nodes.info")
+    );
+    assert_eq!(
+        nodes
+            .headers
+            .get("x-opensearch-lite-tier")
+            .map(String::as_str),
+        Some("best_effort")
+    );
+    let body = nodes.body.unwrap();
+    assert!(body.get("cluster_name").is_none());
+    let nodes = body["nodes"].as_object().expect("nodes is an object");
+    assert_eq!(nodes.len(), 1);
+    let node = nodes.values().next().expect("local node is present");
+    assert_eq!(node["version"], "3.6.0");
+    assert_eq!(node["ip"], "127.0.0.1");
+    assert_eq!(node["http"]["publish_address"], "127.0.0.1:9200");
+    assert!(node.get("name").is_none());
+}
+
+#[tokio::test]
+async fn nodes_metadata_uses_configured_version_and_listener() {
+    let mut config = Config::default();
+    config.ephemeral = true;
+    config.advertised_version = "3.6.1-test".to_string();
+    config.listen = "127.0.0.2:9300".parse().unwrap();
+    let state = AppState::new(config).unwrap();
+
+    call(&state, Method::PUT, "/orders", json!({})).await;
+    call(
+        &state,
+        Method::PUT,
+        "/orders/_doc/1",
+        json!({ "status": "paid" }),
+    )
+    .await;
+
+    let info = call(&state, Method::GET, "/_nodes", Value::Null).await;
+    assert_eq!(info.status, 200);
+    let body = info.body.unwrap();
+    let node = body["nodes"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .expect("local node is present");
+    assert_eq!(node["version"], "3.6.1-test");
+    assert_eq!(node["ip"], "127.0.0.2");
+    assert_eq!(node["http"]["publish_address"], "127.0.0.2:9300");
+
+    let stats = call(&state, Method::GET, "/_nodes/stats", Value::Null).await;
+    assert_eq!(stats.status, 200);
+    assert_eq!(
+        stats
+            .headers
+            .get("x-opensearch-lite-api")
+            .map(String::as_str),
+        Some("nodes.stats")
+    );
+    assert_eq!(
+        stats
+            .headers
+            .get("x-opensearch-lite-tier")
+            .map(String::as_str),
+        Some("best_effort")
+    );
+    let body = stats.body.unwrap();
+    let node = body["nodes"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .expect("local node stats are present");
+    assert_eq!(node["version"], "3.6.1-test");
+    assert_eq!(node["ip"], "127.0.0.2");
+    assert_eq!(node["http"]["publish_address"], "127.0.0.2:9300");
+    assert_eq!(node["indices"]["docs"]["count"], 1);
+
+    let filtered_stats = call(
+        &state,
+        Method::GET,
+        "/_nodes/stats?filter_path=nodes.*.indices.docs.count,nodes.*.http.publish_address",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(filtered_stats.status, 200);
+    assert_eq!(
+        filtered_stats
+            .headers
+            .get("x-opensearch-lite-tier")
+            .map(String::as_str),
+        Some("best_effort")
+    );
+    let body = filtered_stats.body.unwrap();
+    assert!(body.get("cluster_name").is_none());
+    let node = body["nodes"]
+        .as_object()
+        .unwrap()
+        .values()
+        .next()
+        .expect("local node stats are present");
+    assert_eq!(node["indices"]["docs"]["count"], 1);
+    assert_eq!(node["http"]["publish_address"], "127.0.0.2:9300");
+    assert!(node.get("version").is_none());
+    assert!(node["indices"]["docs"].get("deleted").is_none());
 }
 
 #[tokio::test]

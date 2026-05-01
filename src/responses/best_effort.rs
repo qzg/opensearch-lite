@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{json, Map, Value};
 
 use crate::responses::Response;
 
@@ -27,6 +27,131 @@ pub fn cluster_health(api_name: &str) -> Response {
     .compatibility_signal(api_name, "best_effort")
 }
 
+pub fn nodes_info(
+    api_name: &str,
+    advertised_version: &str,
+    node_ip: &str,
+    publish_address: &str,
+    filter_path: Option<&str>,
+) -> Response {
+    let body = json!({
+        "cluster_name": "opensearch-lite",
+        "nodes": {
+            "opensearch-lite-local-node": {
+                "name": "opensearch-lite",
+                "version": advertised_version,
+                "ip": node_ip,
+                "http": {
+                    "publish_address": publish_address
+                }
+            }
+        }
+    });
+    Response::json(200, apply_filter_path(body, filter_path))
+        .compatibility_signal(api_name, "best_effort")
+}
+
+pub fn nodes_stats(
+    api_name: &str,
+    advertised_version: &str,
+    node_ip: &str,
+    publish_address: &str,
+    docs: usize,
+    deleted: usize,
+    store_bytes: usize,
+    filter_path: Option<&str>,
+) -> Response {
+    let body = json!({
+        "cluster_name": "opensearch-lite",
+        "nodes": {
+            "opensearch-lite-local-node": {
+                "name": "opensearch-lite",
+                "version": advertised_version,
+                "host": node_ip,
+                "ip": node_ip,
+                "http": {
+                    "current_open": 0,
+                    "total_opened": 0,
+                    "publish_address": publish_address
+                },
+                "indices": {
+                    "docs": {
+                        "count": docs,
+                        "deleted": deleted
+                    },
+                    "store": {
+                        "size_in_bytes": store_bytes,
+                        "reserved_in_bytes": 0
+                    }
+                }
+            }
+        }
+    });
+    Response::json(200, apply_filter_path(body, filter_path))
+        .compatibility_signal(api_name, "best_effort")
+}
+
 pub fn empty_metadata(api_name: &str) -> Response {
     Response::json(200, json!({})).compatibility_signal(api_name, "best_effort")
+}
+
+fn apply_filter_path(body: Value, filter_path: Option<&str>) -> Value {
+    let Some(filter_path) = filter_path else {
+        return body;
+    };
+    let mut output = Value::Object(Map::new());
+    for pattern in filter_path
+        .split(',')
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+    {
+        let parts = pattern
+            .split('.')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        if let Some(filtered) = filter_value(&body, &parts) {
+            merge_value(&mut output, filtered);
+        }
+    }
+    output
+}
+
+fn filter_value(source: &Value, parts: &[&str]) -> Option<Value> {
+    if parts.is_empty() {
+        return Some(source.clone());
+    }
+    let source = source.as_object()?;
+    if parts[0] == "*" {
+        let mut output = Map::new();
+        for (key, value) in source {
+            if let Some(filtered) = filter_value(value, &parts[1..]) {
+                output.insert(key.clone(), filtered);
+            }
+        }
+        if output.is_empty() {
+            None
+        } else {
+            Some(Value::Object(output))
+        }
+    } else {
+        let filtered = filter_value(source.get(parts[0])?, &parts[1..])?;
+        let mut output = Map::new();
+        output.insert(parts[0].to_string(), filtered);
+        Some(Value::Object(output))
+    }
+}
+
+fn merge_value(target: &mut Value, source: Value) {
+    match (target, source) {
+        (Value::Object(target), Value::Object(source)) => {
+            for (key, source_value) in source {
+                if let Some(target_value) = target.get_mut(&key) {
+                    merge_value(target_value, source_value);
+                } else {
+                    target.insert(key, source_value);
+                }
+            }
+        }
+        (target, source) => *target = source,
+    }
 }

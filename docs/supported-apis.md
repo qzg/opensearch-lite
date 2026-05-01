@@ -47,9 +47,11 @@ and `admin` requires `admin`.
 
 The first Dashboards-shaped fixture tranches cover data-view metadata,
 Discover-style search, simple visualization aggregations, and saved-object
-migration primitives without runtime agent fallback. This is fixture-level
-compatibility only; live OpenSearch Dashboards support remains a separate
-smoke-test milestone.
+migration primitives without runtime agent fallback. A first Docker-hosted
+OpenSearch Dashboards 3.6.0 startup smoke has also reached green status with
+security disabled. Full live Dashboards support still requires browser-driven
+Discover, visualization, saved-object, import/export, and migration workflow
+coverage.
 
 ### Search And Aggregation Guardrails
 

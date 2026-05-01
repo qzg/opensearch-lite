@@ -54,6 +54,7 @@ Security does not make best-effort or fallback routes look implemented.
 - Root info: `GET /`, `HEAD /`
 - Cluster health metadata: `GET /_cluster/health`
 - Cluster stats metadata: `GET /_cluster/stats`
+- Node info/stats metadata: `GET /_nodes`, `GET /_nodes/stats`
 - Selected cat metadata: `GET /_cat/indices`, `GET /_cat/health`,
   `GET /_cat/plugins`, `GET /_cat/templates`
 - Index create/get/exists/delete
@@ -79,17 +80,20 @@ the operation has no meaningful single-node effect. Security/control,
 snapshot/restore/delete, dangling-index, and destructive filesystem-like APIs
 still fail closed.
 
-## Dashboards Fixture Compatibility
+## Dashboards Compatibility
 
-The current Dashboards claim is deliberately narrow: OpenSearch Lite has a
+The Dashboards claim is deliberately narrow: OpenSearch Lite has a
 source-traceable fixture suite for data-view setup, Discover-style searches,
 simple visualization aggregations, and first saved-object migration primitives
 based on the pinned OpenSearch Dashboards 3.7.0 source signals recorded in
 `docs/opensearch-dashboards-gap-analysis.md`.
 
-This does not yet mean a live OpenSearch Dashboards process is supported. Saved
-object migration coverage is still fixture-level and does not yet include a live
-Dashboards smoke.
+A first Docker smoke with OpenSearch Dashboards 3.6.0 now reaches green status
+with security disabled and has passed synthetic data-view field discovery,
+saved-object index-pattern create, and Discover-style `_msearch` route probes.
+This is still not a full live Dashboards support claim. Browser-driven saved
+object, Discover, visualization, import/export, and migration flows remain the
+next compatibility boundary.
 
 ## Query Guardrails
 

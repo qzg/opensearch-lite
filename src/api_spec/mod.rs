@@ -84,8 +84,17 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
     if path == "/_cluster/health" {
         return get_only(method, "cluster.health", Tier::BestEffort);
     }
-    if path == "/_nodes" || path.starts_with("/_nodes/") {
+    if nodes_stats_path(&segments) {
+        return get_only(method, "nodes.stats", Tier::BestEffort);
+    }
+    if nodes_stats_family(&segments) {
+        return unsupported_method("nodes.stats", method);
+    }
+    if nodes_info_path(&segments) {
         return get_only(method, "nodes.info", Tier::BestEffort);
+    }
+    if segments.first() == Some(&"_nodes") {
+        return unsupported_method("nodes.info", method);
     }
     if path == "/_cluster/settings" {
         return match *method {
@@ -647,6 +656,30 @@ fn route_match(api_name: &'static str, tier: Tier, access: AccessClass) -> Route
         tier,
         access,
     }
+}
+
+fn nodes_info_path(segments: &[&str]) -> bool {
+    segments.first() == Some(&"_nodes") && segments.len() <= 3
+}
+
+fn nodes_stats_path(segments: &[&str]) -> bool {
+    if segments.first() != Some(&"_nodes") {
+        return false;
+    }
+    matches!(
+        segments,
+        ["_nodes", "stats"]
+            | ["_nodes", "stats", _]
+            | ["_nodes", "stats", _, _]
+            | ["_nodes", _, "stats"]
+            | ["_nodes", _, "stats", _]
+            | ["_nodes", _, "stats", _, _]
+    )
+}
+
+fn nodes_stats_family(segments: &[&str]) -> bool {
+    segments.first() == Some(&"_nodes")
+        && segments.iter().skip(1).any(|segment| *segment == "stats")
 }
 
 fn control_namespace(segments: &[&str]) -> bool {

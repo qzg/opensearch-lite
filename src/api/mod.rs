@@ -230,41 +230,46 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
 fn handle_best_effort(state: AppState, request: Request, api_name: &str) -> Response {
     logging::approximation(api_name, &request.path);
     let parts = segments(&request.path);
-    match request.path.as_str() {
-        "/_cluster/health" => best_effort::cluster_health(api_name),
-        "/_cluster/settings" => Response::json(
-            200,
-            json!({
-                "persistent": {},
-                "transient": {},
-                "defaults": {}
-            }),
-        )
-        .compatibility_signal(api_name, "best_effort"),
-        path if path.starts_with("/_nodes") => Response::json(
-            200,
-            json!({
-                "cluster_name": "opensearch-lite",
-                "nodes": {}
-            }),
-        )
-        .compatibility_signal(api_name, "best_effort"),
-        _ if parts.first() == Some(&"_cat") && parts.get(1) == Some(&"indices") => {
-            cat_indices(&state, &request, api_name)
+    match api_name {
+        "nodes.info" => {
+            let node_ip = state.config.listen.ip().to_string();
+            best_effort::nodes_info(
+                api_name,
+                &state.config.advertised_version,
+                &node_ip,
+                &state.config.listen.to_string(),
+                request.query_value("filter_path"),
+            )
         }
-        path if path.starts_with("/_cat/health") => Response::json(
-            200,
-            json!([{
-                "epoch": "0",
-                "timestamp": "00:00:00",
-                "cluster": "opensearch-lite",
-                "status": "green",
-                "node.total": "1",
-                "node.data": "1"
-            }]),
-        )
-        .compatibility_signal(api_name, "best_effort"),
-        _ => best_effort::empty_metadata(api_name),
+        "nodes.stats" => handle_nodes_stats(&state, &request, api_name),
+        _ => match request.path.as_str() {
+            "/_cluster/health" => best_effort::cluster_health(api_name),
+            "/_cluster/settings" => Response::json(
+                200,
+                json!({
+                    "persistent": {},
+                    "transient": {},
+                    "defaults": {}
+                }),
+            )
+            .compatibility_signal(api_name, "best_effort"),
+            _ if parts.first() == Some(&"_cat") && parts.get(1) == Some(&"indices") => {
+                cat_indices(&state, &request, api_name)
+            }
+            path if path.starts_with("/_cat/health") => Response::json(
+                200,
+                json!([{
+                    "epoch": "0",
+                    "timestamp": "00:00:00",
+                    "cluster": "opensearch-lite",
+                    "status": "green",
+                    "node.total": "1",
+                    "node.data": "1"
+                }]),
+            )
+            .compatibility_signal(api_name, "best_effort"),
+            _ => best_effort::empty_metadata(api_name),
+        },
     }
 }
 
@@ -889,6 +894,39 @@ fn handle_field_caps(state: &AppState, request: &Request, first: Option<&str>) -
 fn handle_cluster_stats(state: &AppState) -> Response {
     match state.store.read_database(cluster_stats_response) {
         Ok(body) => Response::json(200, body),
+        Err(error) => store_error(error),
+    }
+}
+
+fn handle_nodes_stats(state: &AppState, request: &Request, api_name: &str) -> Response {
+    let stats = state.store.read_database(|db| {
+        let docs = db.document_count();
+        let deleted = db
+            .indexes
+            .values()
+            .map(|index| index.tombstones.len())
+            .sum::<usize>();
+        let store_bytes = db
+            .indexes
+            .values()
+            .map(|index| index.store_size_bytes)
+            .sum::<usize>();
+        (docs, deleted, store_bytes)
+    });
+    match stats {
+        Ok((docs, deleted, store_bytes)) => {
+            let node_ip = state.config.listen.ip().to_string();
+            best_effort::nodes_stats(
+                api_name,
+                &state.config.advertised_version,
+                &node_ip,
+                &state.config.listen.to_string(),
+                docs,
+                deleted,
+                store_bytes,
+                request.query_value("filter_path"),
+            )
+        }
         Err(error) => store_error(error),
     }
 }

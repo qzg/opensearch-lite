@@ -84,7 +84,60 @@ Coverage is source-traceable and fixture-level only:
 - `tests/durable_agent_read_surface.rs` proves coding-agent-readable
   `mutations.jsonl` and `snapshot.json` durable state.
 
-This does not yet claim live OpenSearch Dashboards process compatibility.
+This does not yet claim full live OpenSearch Dashboards process compatibility,
+but the first Docker-based smoke has now booted Dashboards against
+OpenSearch Lite.
+
+## Live Docker Smoke: 2026-04-30
+
+Command shape:
+
+```sh
+docker run --rm \
+  -p 5601:5601 \
+  -e OPENSEARCH_HOSTS='["http://host.docker.internal:9201"]' \
+  -e OPENSEARCH_IGNOREVERSIONMISMATCH=true \
+  -e DISABLE_SECURITY_DASHBOARDS_PLUGIN=true \
+  -e SERVER_HOST=0.0.0.0 \
+  opensearchproject/opensearch-dashboards:3.6.0
+```
+
+`9201` was a local logging proxy to OpenSearch Lite on `127.0.0.1:9200`.
+
+Result: OpenSearch Dashboards `3.6.0` reached green status with security
+disabled. The smoke also passed data-view field discovery, a saved-object
+index-pattern create, and a Discover-style `_msearch` through Dashboards'
+internal routes.
+
+The first live blocker was `nodes.info`: Dashboards calls
+`GET /_nodes?filter_path=nodes.*.version,nodes.*.http.publish_address,nodes.*.ip`
+before saved-object migrations. Returning an empty `nodes` map made Dashboards
+report `Unable to retrieve version information from OpenSearch nodes.` The
+best-effort `nodes.info` response now includes a single local node with
+`version`, `ip`, and `http.publish_address`.
+
+Observed OpenSearch API traffic during the successful smoke:
+
+- `GET /_nodes?filter_path=nodes.*.version,nodes.*.http.publish_address,nodes.*.ip`
+- `GET /.kibana`
+- `GET /_cat/templates/opensearch_dashboards_index_template*?format=json`
+- `PUT /.kibana_1`
+- `GET /_alias/.kibana`
+- `POST /_aliases`
+- `GET /.kibana_1/_refresh`
+- `GET /_cat/plugins?format=JSON`
+- `POST /orders/_field_caps?fields=*&ignore_unavailable=true&allow_no_indices=false`
+- `GET /.kibana/_doc/config%3A3.6.0`
+- `POST /.kibana/_search?size=1000&from=0&rest_total_hits_as_int=true`
+- `PUT /.kibana/_create/config%3A3.6.0?refresh=wait_for`
+- `PUT /.kibana/_create/index-pattern%3Aorders?refresh=wait_for`
+- `POST /_msearch?ignore_throttled=true&ignore_unavailable=true`
+
+Next live-surface work should move beyond boot and synthetic route probes into
+browser-driven flows: create a data view through the UI, open Discover, save a
+search, create a simple visualization/dashboard, and import/export saved
+objects. Those flows are likely to expose richer saved-object search and
+visualization aggregation edge cases.
 
 ## Priority 2: Saved Object Migration Compatibility
 
@@ -116,9 +169,11 @@ The first saved-object migration slice now has deterministic fixture coverage:
   workspace removal scripts. Other scripts fail with a structured
   `script_exception` and do not mutate state.
 
-This is still fixture-level compatibility. The next confidence step is a live
-OpenSearch Dashboards smoke to expose any startup/migration shape gaps that the
-source-traceable fixtures did not exercise.
+This started as fixture-level compatibility, and the first Docker smoke has now
+covered boot plus synthetic data-view and Discover-style route probes. The next
+confidence step is deeper browser-driven Dashboards workflow coverage to expose
+saved-object, Discover, visualization, import/export, and migration shape gaps
+that source-traceable fixtures and startup smoke do not exercise.
 
 ## Priority 3: Saved Object Search DSL
 

@@ -329,6 +329,37 @@ fn dashboards_metadata_routes_have_specific_read_and_write_classes() {
         assert_eq!(route.access, AccessClass::Read, "{path}");
     }
 
+    for path in ["/_nodes", "/_nodes/http", "/_nodes/local-node/http"] {
+        let route = classify(&Method::GET, path);
+        assert_eq!(route.api_name, "nodes.info", "{path}");
+        assert_eq!(route.tier, Tier::BestEffort, "{path}");
+        assert_eq!(route.access, AccessClass::Read, "{path}");
+    }
+
+    for path in [
+        "/_nodes/stats",
+        "/_nodes/local-node/stats",
+        "/_nodes/stats/indices",
+        "/_nodes/stats/indices/docs",
+        "/_nodes/local-node/stats/indices/docs",
+    ] {
+        let route = classify(&Method::GET, path);
+        assert_eq!(route.api_name, "nodes.stats", "{path}");
+        assert_eq!(route.tier, Tier::BestEffort, "{path}");
+        assert_eq!(route.access, AccessClass::Read, "{path}");
+    }
+
+    for (path, api_name) in [
+        ("/_nodes/local-node/stats/indices/docs/extra", "nodes.stats"),
+        ("/_nodes/stats/indices/docs/extra", "nodes.stats"),
+        ("/_nodes/local-node/http/extra", "nodes.info"),
+    ] {
+        let route = classify(&Method::GET, path);
+        assert_eq!(route.api_name, api_name, "{path}");
+        assert_eq!(route.tier, Tier::Unsupported, "{path}");
+        assert_eq!(route.access, AccessClass::Read, "{path}");
+    }
+
     let delete_template = classify(&Method::DELETE, "/_template/legacy");
     assert_eq!(delete_template.api_name, "indices.delete_template");
     assert_eq!(delete_template.tier, Tier::Implemented);
