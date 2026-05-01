@@ -98,9 +98,13 @@ saved-object state, let Dashboards complete migrations, and read the imported
 dashboard through Dashboards' saved-object API. Checked-in fixtures now cover
 the corresponding OpenSearch traffic for overwrite-false import conflicts,
 create-new-copy saved-object imports, and an older
-`.opensearch_dashboards*` reindex/alias migration restart. This is still not a
-full live Dashboards support claim. Browser-driven conflict flows and broader
-older migration edge cases remain the next compatibility boundary.
+`.opensearch_dashboards*` reindex/alias migration restart. A later API-level
+Docker smoke then exercised those import-conflict and older-index migration
+paths through OpenSearch Dashboards itself; it found and fixed URL-encoded
+task/scroll path IDs plus exhausted scroll paging after a one-page migration
+read. This is still not a full live Dashboards support claim. Browser-driven
+saved-object, Discover, visualization, and broader migration edge cases remain
+the next compatibility boundary.
 
 ## Query Guardrails
 

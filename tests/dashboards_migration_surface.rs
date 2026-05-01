@@ -54,7 +54,7 @@ async fn scroll_and_clear_scroll_page_saved_object_reads() {
     )
     .await;
     assert_eq!(clear.status, 200);
-    assert_eq!(clear.body.unwrap()["num_freed"], 0);
+    assert_eq!(clear.body.unwrap()["num_freed"], 1);
 
     let missing = call(
         &state,
@@ -98,11 +98,12 @@ async fn path_form_scroll_reads_scroll_id() {
         .as_str()
         .unwrap()
         .to_string();
+    let path_scroll_id = scroll_id.replace(':', "%3A");
 
     let second = call(
         &state,
         Method::GET,
-        &format!("/_search/scroll/{scroll_id}"),
+        &format!("/_search/scroll/{path_scroll_id}"),
         Value::Null,
     )
     .await;
@@ -112,12 +113,190 @@ async fn path_form_scroll_reads_scroll_id() {
     let third = call(
         &state,
         Method::POST,
-        &format!("/_search/scroll/{scroll_id}"),
+        &format!("/_search/scroll/{path_scroll_id}"),
         Value::Null,
     )
     .await;
     assert_eq!(third.status, 200);
     assert_eq!(third.body.unwrap()["hits"]["hits"][0]["_id"], "3");
+}
+
+#[tokio::test]
+async fn path_form_clear_scroll_decodes_scroll_id() {
+    let state = ephemeral_state();
+    for (id, rank) in [("1", 1), ("2", 2), ("3", 3)] {
+        call(
+            &state,
+            Method::PUT,
+            &format!("/saved/_doc/{id}"),
+            json!({ "rank": rank, "type": "dashboard" }),
+        )
+        .await;
+    }
+
+    let first = call(
+        &state,
+        Method::POST,
+        "/saved/_search?scroll=1m",
+        json!({
+            "size": 1,
+            "sort": [{ "rank": { "order": "asc" } }]
+        }),
+    )
+    .await;
+    assert_eq!(first.status, 200);
+    let scroll_id = first.body.unwrap()["_scroll_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let path_scroll_id = scroll_id.replace(':', "%3A");
+
+    let clear = call(
+        &state,
+        Method::DELETE,
+        &format!("/_search/scroll/{path_scroll_id}"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(clear.status, 200);
+    assert_eq!(clear.body.unwrap()["num_freed"], 1);
+
+    let missing = call(
+        &state,
+        Method::GET,
+        &format!("/_search/scroll/{path_scroll_id}"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(missing.status, 404);
+    assert_eq!(
+        missing.body.unwrap()["error"]["type"],
+        "search_context_missing_exception"
+    );
+}
+
+#[tokio::test]
+async fn exhausted_scroll_id_returns_one_empty_page_for_dashboards_migrations() {
+    let state = ephemeral_state();
+    call(
+        &state,
+        Method::PUT,
+        "/saved/_doc/1",
+        json!({ "rank": 1, "type": "index-pattern" }),
+    )
+    .await;
+
+    let first = call(
+        &state,
+        Method::POST,
+        "/saved/_search?scroll=15m",
+        json!({ "size": 1000 }),
+    )
+    .await;
+    assert_eq!(first.status, 200);
+    let scroll_id = first.body.unwrap()["_scroll_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let path_scroll_id = scroll_id.replace(':', "%3A");
+
+    let exhausted = call(
+        &state,
+        Method::GET,
+        &format!("/_search/scroll/{path_scroll_id}?scroll=15m"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(exhausted.status, 200);
+    assert_eq!(
+        exhausted.body.unwrap()["hits"]["hits"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let missing = call(
+        &state,
+        Method::GET,
+        &format!("/_search/scroll/{path_scroll_id}?scroll=15m"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(missing.status, 404);
+    assert_eq!(
+        missing.body.unwrap()["error"]["type"],
+        "search_context_missing_exception"
+    );
+}
+
+#[tokio::test]
+async fn multi_page_scroll_returns_terminal_empty_page_before_missing() {
+    let state = ephemeral_state();
+    for (id, rank) in [("1", 1), ("2", 2)] {
+        call(
+            &state,
+            Method::PUT,
+            &format!("/saved/_doc/{id}"),
+            json!({ "rank": rank, "type": "index-pattern" }),
+        )
+        .await;
+    }
+
+    let first = call(
+        &state,
+        Method::POST,
+        "/saved/_search?scroll=15m",
+        json!({
+            "size": 1,
+            "sort": [{ "rank": { "order": "asc" } }]
+        }),
+    )
+    .await;
+    assert_eq!(first.status, 200);
+    let first_body = first.body.unwrap();
+    assert_eq!(first_body["hits"]["hits"][0]["_id"], "1");
+    let scroll_id = first_body["_scroll_id"].as_str().unwrap().to_string();
+    let path_scroll_id = scroll_id.replace(':', "%3A");
+
+    let final_hit = call(
+        &state,
+        Method::GET,
+        &format!("/_search/scroll/{path_scroll_id}?scroll=15m"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(final_hit.status, 200);
+    assert_eq!(final_hit.body.unwrap()["hits"]["hits"][0]["_id"], "2");
+
+    let terminal_empty = call(
+        &state,
+        Method::GET,
+        &format!("/_search/scroll/{path_scroll_id}?scroll=15m"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(terminal_empty.status, 200);
+    assert_eq!(
+        terminal_empty.body.unwrap()["hits"]["hits"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let missing = call(
+        &state,
+        Method::GET,
+        &format!("/_search/scroll/{path_scroll_id}?scroll=15m"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(missing.status, 404);
+    assert_eq!(
+        missing.body.unwrap()["error"]["type"],
+        "search_context_missing_exception"
+    );
 }
 
 #[tokio::test]
@@ -160,7 +339,14 @@ async fn reindex_records_completed_task_for_dashboards_polling() {
     assert_eq!(reindex.status, 200);
     let task = reindex.body.unwrap()["task"].as_str().unwrap().to_string();
 
-    let task_response = call(&state, Method::GET, &format!("/_tasks/{task}"), Value::Null).await;
+    let task_path_id = task.replace(':', "%3A");
+    let task_response = call(
+        &state,
+        Method::GET,
+        &format!("/_tasks/{task_path_id}"),
+        Value::Null,
+    )
+    .await;
     assert_eq!(task_response.status, 200);
     let body = task_response.body.unwrap();
     assert_eq!(body["completed"], true);

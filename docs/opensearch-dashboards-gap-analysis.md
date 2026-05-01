@@ -177,9 +177,48 @@ dashboard. Restart traffic against existing `.kibana` state added:
 Checked-in fixtures now preserve the OpenSearch traffic contracts for
 overwrite-false import conflicts, `createNewCopies`-style import writes, deep
 references after durable replay, and an older `.opensearch_dashboards*`
-reindex/alias migration restart. Next live-surface work should run the
-browser/API flows that produce those conflict states end to end and capture any
-additional route or response-shape gaps.
+reindex/alias migration restart.
+
+## Live Import Conflict And Older Migration Smoke: 2026-05-01
+
+The next Docker smoke drove the saved-object conflict paths through Dashboards'
+HTTP API instead of only replaying equivalent OpenSearch traffic. It exported a
+data view, visualization, and dashboard, then re-imported that NDJSON with
+`overwrite=false` and `createNewCopies=true`.
+
+Result: the conflict import returned `success: false` with three conflict
+entries, and `createNewCopies=true` returned `success: true` with three
+generated destination IDs. The original dashboard remained readable, and the
+copied dashboard references were rewritten to the copied visualization and data
+view IDs.
+
+The same tranche also started Dashboards with
+`opensearchDashboards.index=.opensearch_dashboards` against a durable Lite data
+directory seeded with a supported older saved-object index. That live migration
+reindexed `.opensearch_dashboards` to `.opensearch_dashboards_1`, migrated the
+documents to `.opensearch_dashboards_2`, switched the alias, and reached green
+status. `GET /api/saved_objects/index-pattern/orders` returned the migrated
+data view with migration version `7.6.0`.
+
+Live migration found two response-shape gaps that were promoted to fixtures:
+
+- Dashboards URL-encodes synthetic task IDs, polling
+  `GET /_tasks/opensearch-lite-task%3A1`. `tasks.get` now decodes the path
+  parameter before looking up the completed local task.
+- Dashboards also URL-encodes path-form scroll IDs and may request one more
+  scroll page after the first page already returned all hits. Path-form scroll
+  IDs are now decoded, and exhausted scroll contexts survive for one empty page
+  instead of returning `search_context_missing_exception`.
+
+Observed additional OpenSearch API traffic during the older-index migration:
+
+- `POST /_reindex?refresh=true&wait_for_completion=false`
+- `GET /_tasks/opensearch-lite-task%3A1`
+- `POST /.opensearch_dashboards_1/_search?scroll=15m`
+- `POST /_bulk`
+- `GET /_search/scroll/opensearch-lite-scroll%3A2?scroll=15m`
+- `DELETE /_search/scroll/opensearch-lite-scroll%3A2`
+- `POST /_aliases`
 
 ## Priority 2: Saved Object Migration Compatibility
 
@@ -211,11 +250,13 @@ The first saved-object migration slice now has deterministic fixture coverage:
   workspace removal scripts. Other scripts fail with a structured
   `script_exception` and do not mutate state.
 
-This started as fixture-level compatibility, and the first Docker smoke has now
-covered boot plus synthetic data-view and Discover-style route probes. The next
-confidence step is deeper browser-driven Dashboards workflow coverage to expose
-saved-object, Discover, visualization, import/export, and migration shape gaps
-that source-traceable fixtures and startup smoke do not exercise.
+This started as fixture-level compatibility, and Docker smokes have now covered
+boot, synthetic data-view and Discover-style route probes, saved-object
+export/import conflict modes, durable replay, and an older
+`.opensearch_dashboards*` migration. The next confidence step is broader
+browser-driven Dashboards workflow coverage to expose UI-level saved-object,
+Discover, visualization, and migration edge cases that API-level smokes do not
+exercise.
 
 ## Priority 3: Saved Object Search DSL
 
@@ -269,8 +310,8 @@ scope.
 
 ## Suggested Next Tranche
 
-Run the next live OpenSearch Dashboards smoke against browser/API-level import
-conflict handling and older durable `.opensearch_dashboards*` state. Capture
+Run a browser-driven OpenSearch Dashboards smoke for saved-object management,
+Discover, and visualization workflows on the migrated durable state. Capture
 remaining route/shape failures as source-traceable fixtures. Likely follow-ups
 are migration edge-case response shapes, saved-object repository search
 variants, and any plugin startup metadata that appears in real traffic.

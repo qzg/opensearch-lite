@@ -33,6 +33,7 @@ struct ScrollCursor {
     max_score: Value,
     last_accessed: Instant,
     bytes: usize,
+    terminal_empty_pending: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -74,14 +75,6 @@ impl RuntimeState {
         } else {
             Vec::new()
         };
-        if remaining_hits.is_empty() {
-            return Ok(ScrollPage {
-                scroll_id,
-                hits: page_hits,
-                total,
-                max_score,
-            });
-        }
         let bytes = estimate_scroll_bytes(&remaining_hits, &total, &max_score);
         if bytes > max_bytes {
             return Err(RuntimeError::new(
@@ -93,6 +86,7 @@ impl RuntimeState {
             ));
         }
         let cursor = ScrollCursor {
+            terminal_empty_pending: remaining_hits.is_empty(),
             hits: remaining_hits,
             position: 0,
             batch_size,
@@ -113,9 +107,7 @@ impl RuntimeState {
                 "maximum local scroll contexts reached",
             ));
         }
-        if !cursor.hits.is_empty() {
-            inner.scrolls.insert(scroll_id.clone(), cursor);
-        }
+        inner.scrolls.insert(scroll_id.clone(), cursor);
         Ok(ScrollPage {
             scroll_id,
             hits: page_hits,
@@ -127,23 +119,36 @@ impl RuntimeState {
     pub fn next_scroll(&self, scroll_id: &str) -> Option<ScrollPage> {
         let mut inner = self.inner.lock().expect("runtime lock is not poisoned");
         purge_expired_scrolls(&mut inner);
-        let (page, exhausted) = {
+        let mut remove_cursor = false;
+        let page = {
             let cursor = inner.scrolls.get_mut(scroll_id)?;
-            let (hits, position) = page_hits(&cursor.hits, cursor.position, cursor.batch_size);
-            cursor.position = position;
             cursor.last_accessed = Instant::now();
-            let exhausted = position >= cursor.hits.len();
-            (
+            if cursor.terminal_empty_pending {
+                remove_cursor = true;
+                ScrollPage {
+                    scroll_id: scroll_id.to_string(),
+                    hits: Vec::new(),
+                    total: cursor.total.clone(),
+                    max_score: cursor.max_score.clone(),
+                }
+            } else {
+                let (hits, position) = page_hits(&cursor.hits, cursor.position, cursor.batch_size);
+                cursor.position = position;
+                if position >= cursor.hits.len() {
+                    cursor.terminal_empty_pending = true;
+                    cursor.hits.clear();
+                    cursor.position = 0;
+                    cursor.bytes = estimate_scroll_bytes(&[], &cursor.total, &cursor.max_score);
+                }
                 ScrollPage {
                     scroll_id: scroll_id.to_string(),
                     hits,
                     total: cursor.total.clone(),
                     max_score: cursor.max_score.clone(),
-                },
-                exhausted,
-            )
+                }
+            }
         };
-        if exhausted {
+        if remove_cursor {
             inner.scrolls.remove(scroll_id);
         }
         Some(page)
@@ -274,4 +279,59 @@ fn estimate_value_bytes(value: &Value) -> usize {
 fn page_hits(hits: &[Value], position: usize, batch_size: usize) -> (Vec<Value>, usize) {
     let end = position.saturating_add(batch_size).min(hits.len());
     (hits[position.min(hits.len())..end].to_vec(), end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hit(id: &str, payload_size: usize) -> Value {
+        json!({
+            "_id": id,
+            "_source": {
+                "payload": "x".repeat(payload_size)
+            }
+        })
+    }
+
+    #[test]
+    fn terminal_empty_scroll_state_drops_retained_hits_before_next_request() {
+        let runtime = RuntimeState::default();
+        let first = runtime
+            .create_scroll(
+                vec![hit("1", 2048), hit("2", 2048)],
+                json!({ "value": 2, "relation": "eq" }),
+                Value::Null,
+                1,
+                100_000,
+            )
+            .expect("scroll context is within budget");
+        let scroll_id = first.scroll_id;
+
+        let final_hit = runtime
+            .next_scroll(&scroll_id)
+            .expect("final non-empty page is retained");
+        assert_eq!(final_hit.hits.len(), 1);
+
+        {
+            let inner = runtime.inner.lock().expect("runtime lock is not poisoned");
+            let cursor = inner
+                .scrolls
+                .get(&scroll_id)
+                .expect("terminal page is pending");
+            assert!(cursor.terminal_empty_pending);
+            assert!(cursor.hits.is_empty());
+            assert_eq!(cursor.position, 0);
+            assert_eq!(
+                cursor.bytes,
+                estimate_scroll_bytes(&[], &cursor.total, &cursor.max_score)
+            );
+        }
+
+        let terminal_empty = runtime
+            .next_scroll(&scroll_id)
+            .expect("terminal empty page is returned once");
+        assert!(terminal_empty.hits.is_empty());
+        assert!(runtime.next_scroll(&scroll_id).is_none());
+    }
 }

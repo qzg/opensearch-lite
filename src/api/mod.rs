@@ -80,7 +80,8 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
 
     let parts = segments(&request.path);
     if parts.first() == Some(&"_tasks") && parts.len() == 2 {
-        return handle_task_get(&state, parts[1]);
+        let task_id = decode_path_param(parts[1]);
+        return handle_task_get(&state, &task_id);
     }
     if request.path == "/_reindex" {
         return handle_reindex(&state, &request).await;
@@ -2255,7 +2256,7 @@ fn scroll_memory_budget(state: &AppState) -> usize {
 
 fn handle_scroll(state: &AppState, request: &Request, path_scroll_id: Option<&str>) -> Response {
     let scroll_id = match path_scroll_id
-        .map(ToString::to_string)
+        .map(decode_path_param)
         .or_else(|| scroll_id_from_request(request))
     {
         Some(scroll_id) => scroll_id,
@@ -2292,7 +2293,7 @@ fn handle_clear_scroll(
 ) -> Response {
     let mut scroll_ids = Vec::new();
     if let Some(path_scroll_id) = path_scroll_id {
-        scroll_ids.push(path_scroll_id.to_string());
+        scroll_ids.push(decode_path_param(path_scroll_id));
     }
     scroll_ids.extend(scroll_ids_from_request(request));
     if scroll_ids.is_empty() {

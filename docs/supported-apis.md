@@ -53,9 +53,12 @@ security disabled. Follow-up live smokes created, exported, imported, and
 durably replayed saved objects with deep references intact. Checked-in
 fixtures cover the OpenSearch traffic for overwrite-false import conflicts,
 create-new-copy saved-object imports, and an older
-`.opensearch_dashboards*` durable migration restart. Full live Dashboards
-support still requires browser-driven conflict flows and broader older
-migration workflow coverage.
+`.opensearch_dashboards*` durable migration restart. A later API-level Docker
+smoke also exercised those import-conflict and older-index migration paths
+through OpenSearch Dashboards itself, including URL-encoded task and scroll IDs
+and exhausted scroll paging. Full live Dashboards support still requires
+browser-driven saved-object, Discover, visualization, and migration workflow
+coverage.
 
 ### Search And Aggregation Guardrails
 
