@@ -259,30 +259,33 @@ fn matches_simple_query_string(source: &Value, query: &Value) -> Result<bool, St
     if query_text.trim().is_empty() || query_text.trim() == "*" {
         return Ok(true);
     }
-    let fields = query
-        .get("fields")
-        .and_then(Value::as_array)
-        .map(|fields| fields.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let haystack = if fields.is_empty() {
+    let fields = simple_query_fields(query.get("fields"));
+    let haystack = if fields.is_empty() || fields.iter().any(|field| field == "*") {
         let mut values = Vec::new();
         collect_string_values(source, &mut values);
         values.join(" ")
     } else {
         fields
             .iter()
-            .filter_map(|field| value_at(source, field).and_then(Value::as_str))
+            .filter_map(|field| simple_query_field_value(source, field))
             .collect::<Vec<_>>()
             .join(" ")
     }
     .to_lowercase();
-    let terms = query_text
-        .split_whitespace()
-        .map(|term| term.trim_matches(|ch: char| matches!(ch, '"' | '\'' | '+' | '-' | '(' | ')')))
-        .filter(|term| !term.is_empty())
-        .map(str::to_lowercase)
-        .collect::<Vec<_>>();
-    Ok(!terms.is_empty() && terms.iter().all(|term| haystack.contains(term)))
+    let terms = simple_query_terms(query_text);
+    if terms.is_empty() {
+        return Ok(false);
+    }
+    let require_all = query
+        .get("default_operator")
+        .and_then(Value::as_str)
+        .map(|operator| operator.eq_ignore_ascii_case("AND"))
+        .unwrap_or(false);
+    if require_all {
+        Ok(terms.iter().all(|term| haystack.contains(term)))
+    } else {
+        Ok(terms.iter().any(|term| haystack.contains(term)))
+    }
 }
 
 fn collect_string_values<'a>(value: &'a Value, output: &mut Vec<&'a str>) {
@@ -300,6 +303,64 @@ fn collect_string_values<'a>(value: &'a Value, output: &mut Vec<&'a str>) {
         }
         _ => {}
     }
+}
+
+fn simple_query_fields(fields: Option<&Value>) -> Vec<String> {
+    let Some(fields) = fields.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    fields
+        .iter()
+        .filter_map(Value::as_str)
+        .flat_map(|field| field.split(','))
+        .map(str::trim)
+        .filter(|field| !field.is_empty())
+        .map(|field| {
+            field
+                .split_once('^')
+                .map(|(field, _)| field)
+                .unwrap_or(field)
+        })
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn simple_query_field_value(source: &Value, field: &str) -> Option<String> {
+    value_at(source, field)
+        .or_else(|| strip_field_suffix(field, ".raw").and_then(|field| value_at(source, field)))
+        .or_else(|| strip_field_suffix(field, ".keyword").and_then(|field| value_at(source, field)))
+        .and_then(simple_query_value_string)
+}
+
+fn strip_field_suffix<'a>(field: &'a str, suffix: &str) -> Option<&'a str> {
+    field.strip_suffix(suffix)
+}
+
+fn simple_query_value_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Array(values) => {
+            let values = values
+                .iter()
+                .filter_map(simple_query_value_string)
+                .collect::<Vec<_>>();
+            (!values.is_empty()).then(|| values.join(" "))
+        }
+        _ => None,
+    }
+}
+
+fn simple_query_terms(query_text: &str) -> Vec<String> {
+    query_text
+        .split_whitespace()
+        .map(|term| {
+            term.trim_matches(|ch: char| matches!(ch, '"' | '\'' | '+' | '-' | '(' | ')' | '*'))
+        })
+        .filter(|term| !term.is_empty())
+        .map(str::to_lowercase)
+        .collect()
 }
 
 fn matches_nested_query(source: &Value, id: &str, nested: &Value) -> Result<bool, String> {

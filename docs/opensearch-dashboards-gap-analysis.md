@@ -317,6 +317,12 @@ This should still be an in-memory evaluator. The development-scale data target
 does not require Lucene parity, but Dashboards needs the response shape and
 basic semantics to be predictable.
 
+The next saved-object management slice has started with the query forms emitted
+by Dashboards `_find`: `simple_query_string` now honors OR vs AND
+`default_operator`, wildcard all-field searches, boosted fields such as
+`dashboard.title^3`, and `.raw`/`.keyword` multifield fallbacks against the
+stored source.
+
 ## Priority 4: Visualization And Discover Workflows
 
 Basic Discover can work with search hits and source filtering, but dashboards

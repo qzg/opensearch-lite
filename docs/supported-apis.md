@@ -40,7 +40,7 @@ and `admin` requires `admin`.
 | `get`, `get_source`, `exists_source` | implemented | read | Source retrieval and existence checks. |
 | `indices.refresh` | implemented | write | No-op visibility barrier; writes are already visible after commit in the local store. |
 | `bulk` | implemented | write | `POST`/`PUT` only; malformed source lines and invalid metadata produce errors without mutation. |
-| `search`, `count`, `mget`, `msearch` | implemented | read | In-memory search and read APIs, including read APIs that use `POST`; supports the documented Discover query and first visualization aggregation subset. |
+| `search`, `count`, `mget`, `msearch` | implemented | read | In-memory search and read APIs, including read APIs that use `POST`; supports the documented Discover query, saved-object `_find` search fields, and first visualization aggregation subset. |
 | `indices.validate_query`, `indices.analyze`, `explain` | implemented/scaffold | read | Development-scale query validation, simple text analysis, and local evaluator explanation. |
 | `scroll`, `clear_scroll` | implemented | read | In-memory process-local scroll cursors for migration-style batched reads; cursors are not durable across restarts. |
 | `reindex`, `tasks.get` | implemented | write/read | Reindex executes synchronously against local data; `wait_for_completion=false` returns a synthetic completed task for polling clients. |

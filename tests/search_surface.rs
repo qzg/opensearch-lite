@@ -142,10 +142,25 @@ async fn simple_query_string_and_nested_queries_support_discover_shapes() {
         "/saved/_doc/1",
         json!({
             "title": "Northwind sales dashboard",
+            "dashboard": {
+                "title": "Northwind sales dashboard"
+            },
             "references": [
                 { "type": "index-pattern", "id": "orders" },
                 { "type": "visualization", "id": "sales" }
             ]
+        }),
+    )
+    .await;
+    call(
+        &state,
+        Method::PUT,
+        "/saved/_doc/2",
+        json!({
+            "dashboard": {
+                "title": "Inventory overview"
+            },
+            "references": []
         }),
     )
     .await;
@@ -166,6 +181,48 @@ async fn simple_query_string_and_nested_queries_support_discover_shapes() {
     .await;
     assert_eq!(simple.status, 200);
     assert_eq!(simple.body.unwrap()["hits"]["total"]["value"], 1);
+
+    let default_or_all_fields = call(
+        &state,
+        Method::POST,
+        "/saved/_search",
+        json!({
+            "query": {
+                "simple_query_string": {
+                    "query": "sales inventory",
+                    "fields": ["*"],
+                    "default_operator": "OR"
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(default_or_all_fields.status, 200);
+    assert_eq!(
+        default_or_all_fields.body.unwrap()["hits"]["total"]["value"],
+        2
+    );
+
+    let boosted_and_multifield = call(
+        &state,
+        Method::POST,
+        "/saved/_search",
+        json!({
+            "query": {
+                "simple_query_string": {
+                    "query": "northwind dashboard",
+                    "fields": ["dashboard.title^3", "dashboard.title.raw"],
+                    "default_operator": "AND"
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(boosted_and_multifield.status, 200);
+    assert_eq!(
+        boosted_and_multifield.body.unwrap()["hits"]["total"]["value"],
+        1
+    );
 
     let nested = call(
         &state,
