@@ -42,9 +42,11 @@ connection settings.
 This is not OpenSearch Security plugin parity. Security management APIs,
 tenants, document-level security, field-level security, index-pattern
 permissions, audit-log management, SAML, OIDC, LDAP, and AWS SigV4 are not
-implemented in this tranche. Requests under `_plugins/_security`,
-`_opendistro/_security`, `_security`, snapshots, and task-control namespaces
-fail closed instead of reaching runtime fallback.
+implemented in this tranche. The exact Dashboards account probe
+`GET /_plugins/_security/api/account` returns mocked local principal metadata;
+other requests under `_plugins/_security`, `_opendistro/_security`,
+`_security`, snapshots, and task-control namespaces fail closed instead of
+reaching runtime fallback.
 
 Strict compatibility is evaluated after authentication and authorization.
 Security does not make best-effort or fallback routes look implemented.
@@ -58,6 +60,7 @@ Security does not make best-effort or fallback routes look implemented.
 - Selected cat metadata: `GET /_cat/indices`, `GET /_cat/health`,
   `GET /_cat/plugins`, `GET /_cat/templates`
 - Index create/get/exists/delete
+- Index resolution for Dashboards data-view creation: `GET /_resolve/index/{name}`
 - Composable index templates plus legacy template delete miss behavior
 - Aliases, including `_aliases`/`_alias` `add`, `remove`, and `remove_index`
 - Document index/create/get/head/update/delete
@@ -102,9 +105,11 @@ create-new-copy saved-object imports, and an older
 Docker smoke then exercised those import-conflict and older-index migration
 paths through OpenSearch Dashboards itself; it found and fixed URL-encoded
 task/scroll path IDs plus exhausted scroll paging after a one-page migration
-read. This is still not a full live Dashboards support claim. Browser-driven
-saved-object, Discover, visualization, and broader migration edge cases remain
-the next compatibility boundary.
+read. A browser-driven Dashboards smoke now creates a data view through the UI,
+loads Discover results, saves a Data Table visualization, and lists those saved
+objects in management. This is still not a full live Dashboards support claim;
+broader migration and application edge cases remain the next compatibility
+boundary.
 
 ## Query Guardrails
 

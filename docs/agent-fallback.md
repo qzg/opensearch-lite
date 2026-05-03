@@ -7,12 +7,17 @@ Write fallback is still disabled unless `--agent-enable-write-fallback` and
 authentication and authorization. It cannot answer unauthenticated or
 unauthorized requests, and it is denied for security/control namespaces such as
 `_plugins/_security`, `_opendistro/_security`, `_security`, snapshots, and
-task-control APIs.
+task-control APIs. The exact Dashboards account probe
+`GET /_plugins/_security/api/account` is a deterministic mocked route and does
+not use fallback. The exact direct-query data-source probe
+`GET /_plugins/_query/_datasources` is also a deterministic mocked route and
+does not use fallback.
 
 First-tranche Dashboards fixture APIs are deterministic and do not use fallback:
 `indices.exists`, `field_caps`, `cat.plugins`, `cat.templates`,
-`cluster.stats`, legacy template delete, alias updates, Discover-style search,
-and the documented visualization aggregation subset.
+`cluster.stats`, `indices.resolve_index`, `query.datasources`, legacy template
+delete, alias updates, Discover-style search, and the documented visualization
+aggregation subset.
 
 ## Configuration
 

@@ -32,6 +32,7 @@ and `admin` requires `admin`.
 | `indices.get_mapping`, `indices.get_field_mapping`, `indices.get_settings` | implemented | read | Stored as JSON catalog metadata and used by compatibility clients. |
 | `indices.put_mapping`, `indices.put_settings` | implemented | write | Stored as JSON catalog metadata. |
 | `field_caps` | implemented | read | `GET`/`POST /_field_caps` and `/{index}/_field_caps`; built from explicit mappings and observed local documents. |
+| `indices.resolve_index` | implemented | read | `GET /_resolve/index/{name}` lists matching local indices and aliases for Dashboards index-pattern creation; dot-prefixed local system indices are hidden unless `expand_wildcards=all`/`hidden` is requested. |
 | `indices.stats`, `cat.indices` | implemented/best-effort | read | Single-node document/store counters for local compatibility checks. |
 | `cat.plugins`, `cat.templates` | implemented | read | Deterministic empty local metadata arrays for Dashboards compatibility. |
 | `cluster.stats` | implemented | read | Stable single-node development metadata with cluster UUID, node, index, document, and store counters. |
@@ -56,9 +57,11 @@ create-new-copy saved-object imports, and an older
 `.opensearch_dashboards*` durable migration restart. A later API-level Docker
 smoke also exercised those import-conflict and older-index migration paths
 through OpenSearch Dashboards itself, including URL-encoded task and scroll IDs
-and exhausted scroll paging. Full live Dashboards support still requires
-browser-driven saved-object, Discover, visualization, and migration workflow
-coverage.
+and exhausted scroll paging. A browser-driven OpenSearch Dashboards 3.6.0 smoke
+now covers data-view creation, Discover results, a saved Data Table
+visualization, and Saved Objects listing against migrated durable local state.
+Full live Dashboards support still requires broader migration and application
+edge-case coverage.
 
 ### Search And Aggregation Guardrails
 
@@ -96,8 +99,9 @@ compatibility headers:
 
 Mocked responses are positive compatibility no-ops for APIs whose distributed
 cluster side effects do not exist in OpenSearch Lite. They include compatibility
-headers and an `opensearch_lite` body field explaining the local behavior and
-the path to full OpenSearch when the behavior matters.
+headers and, where response-shape compatibility allows it, an
+`opensearch_lite` body field explaining the local behavior and the path to full
+OpenSearch when the behavior matters.
 
 Initial mocked families:
 
@@ -105,6 +109,10 @@ Initial mocked families:
 - `cluster.put_settings`
 - `cluster.reroute`
 - cluster voting/decommission/weighted-routing control toggles
+- `security.account` (`GET /_plugins/_security/api/account`) for local
+  Dashboards account metadata only
+- `query.datasources` (`GET /_plugins/_query/_datasources`) as an empty
+  direct-query data-source list
 - `indices.clear_cache`
 - `indices.flush`
 - `indices.forcemerge`

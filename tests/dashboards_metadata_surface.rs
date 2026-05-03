@@ -61,6 +61,101 @@ async fn dashboards_data_view_metadata_is_deterministic() {
     assert_eq!(missing.status, 404);
     assert!(missing.body.is_none());
 
+    let create_shadow = call(
+        &state,
+        Method::PUT,
+        "/orders-shadow",
+        json!({
+            "mappings": {
+                "properties": {
+                    "status": { "type": "keyword" }
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(create_shadow.status, 200);
+
+    let hidden = call(
+        &state,
+        Method::PUT,
+        "/.opensearch_dashboards",
+        json!({ "mappings": { "properties": { "type": { "type": "keyword" } } } }),
+    )
+    .await;
+    assert_eq!(hidden.status, 200);
+
+    let alias = call(
+        &state,
+        Method::POST,
+        "/_aliases",
+        json!({
+            "actions": [
+                { "add": { "indices": ["orders", "orders-shadow"], "alias": "orders-read" } }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(alias.status, 200);
+
+    let resolved = call(&state, Method::GET, "/_resolve/index/*", Value::Null).await;
+    assert_eq!(resolved.status, 200);
+    let body = resolved.body.unwrap();
+    assert_eq!(
+        body["indices"],
+        json!([
+            {
+                "name": "orders",
+                "aliases": ["orders-read"],
+                "attributes": ["open"]
+            },
+            {
+                "name": "orders-shadow",
+                "aliases": ["orders-read"],
+                "attributes": ["open"]
+            }
+        ])
+    );
+    assert_eq!(
+        body["aliases"],
+        json!([{
+            "name": "orders-read",
+            "indices": ["orders", "orders-shadow"]
+        }])
+    );
+    assert_eq!(body["data_streams"], json!([]));
+
+    let resolved_alias = call(
+        &state,
+        Method::GET,
+        "/_resolve/index/orders-read",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(resolved_alias.status, 200);
+    let body = resolved_alias.body.unwrap();
+    assert_eq!(body["indices"], json!([]));
+    assert_eq!(
+        body["aliases"],
+        json!([{
+            "name": "orders-read",
+            "indices": ["orders", "orders-shadow"]
+        }])
+    );
+
+    let resolved_all = call(
+        &state,
+        Method::GET,
+        "/_resolve/index/*?expand_wildcards=all",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(resolved_all.status, 200);
+    assert_eq!(
+        resolved_all.body.unwrap()["indices"][0]["name"],
+        ".opensearch_dashboards"
+    );
+
     let get_caps = call(
         &state,
         Method::GET,
@@ -125,7 +220,7 @@ async fn dashboards_data_view_metadata_is_deterministic() {
         .unwrap()
         .starts_with("opensearch-lite-"));
     assert_eq!(body["nodes"]["count"]["total"], 1);
-    assert_eq!(body["indices"]["count"], 1);
+    assert_eq!(body["indices"]["count"], 3);
     assert_eq!(body["indices"]["docs"]["count"], 1);
     assert!(body["indices"]["store"]["size_in_bytes"].as_u64().unwrap() > 0);
 

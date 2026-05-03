@@ -61,6 +61,17 @@ Run the same arguments with `--validate-config` from a shell, `docker exec`, or
 listener. See [docs/security.md](docs/security.md) and
 [docs/kubernetes-security.md](docs/kubernetes-security.md).
 
+## Packaging
+
+Build a local release zip for the current operating system and CPU:
+
+```sh
+scripts/package-release.sh
+```
+
+The script writes `dist/opensearch-lite-<version>-<os>-<arch>.zip` and a
+matching `.sha256` checksum. Build each target platform separately.
+
 ## Verification
 
 ```sh

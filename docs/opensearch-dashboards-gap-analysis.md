@@ -253,10 +253,48 @@ The first saved-object migration slice now has deterministic fixture coverage:
 This started as fixture-level compatibility, and Docker smokes have now covered
 boot, synthetic data-view and Discover-style route probes, saved-object
 export/import conflict modes, durable replay, and an older
-`.opensearch_dashboards*` migration. The next confidence step is broader
-browser-driven Dashboards workflow coverage to expose UI-level saved-object,
-Discover, visualization, and migration edge cases that API-level smokes do not
-exercise.
+`.opensearch_dashboards*` migration. Browser-driven smoke coverage now also
+exercises UI-level data-view creation, Discover, visualization, and saved-object
+management flows.
+
+## Live Browser Workflow Smoke: 2026-05-01
+
+The browser-driven smoke reused OpenSearch Dashboards `3.6.0`, the local
+loopback-rewriting proxy, and durable OpenSearch Lite state under
+`opensearchDashboards.index=.opensearch_dashboards`.
+
+Result: Dashboards loaded Home without unhandled startup rejections, created an
+`orders` data view through Management, displayed all four seeded `orders`
+documents in Discover, created and saved a Data Table visualization showing a
+count of `4`, and listed Advanced Settings, the `orders` data view, and the
+saved visualization in Saved Objects management.
+
+Live browser traffic found three route/shape gaps that were promoted to local
+implementation and tests:
+
+- Dashboards still probes `GET /_plugins/_security/api/account` even with the
+  Dashboards security plugin disabled. OpenSearch Lite now returns narrow
+  mocked local principal metadata for that exact route while keeping the rest
+  of the security namespace closed.
+- Dashboards probes `GET /_plugins/_query/_datasources` during startup and
+  management page loads. OpenSearch Lite now returns a mocked empty
+  direct-query data-source list for that exact read route.
+- Index-pattern creation calls `GET /_resolve/index/*` before field caps.
+  OpenSearch Lite now returns matching local indices and aliases with
+  dot-prefixed local system indices hidden unless `expand_wildcards=all` or
+  `hidden` is requested.
+
+Observed additional OpenSearch API traffic during this browser workflow:
+
+- `GET /_plugins/_security/api/account`
+- `GET /_plugins/_query/_datasources`
+- `GET /_resolve/index/*`
+- `POST /orders/_field_caps?fields=*&ignore_unavailable=true&allow_no_indices=false`
+- `PUT /.opensearch_dashboards/_create/index-pattern%3A<uuid>?refresh=wait_for`
+- `POST /.opensearch_dashboards/_update/config%3A3.6.0?refresh=wait_for&_source_includes=...`
+- `POST /orders/_search?ignore_unavailable=true&track_total_hits=true&timeout=30000ms&preference=...`
+- `PUT /.opensearch_dashboards/_create/visualization%3A<uuid>?refresh=wait_for`
+- `POST /.opensearch_dashboards/_search?size=50&from=0&rest_total_hits_as_int=true`
 
 ## Priority 3: Saved Object Search DSL
 
@@ -310,8 +348,9 @@ scope.
 
 ## Suggested Next Tranche
 
-Run a browser-driven OpenSearch Dashboards smoke for saved-object management,
-Discover, and visualization workflows on the migrated durable state. Capture
-remaining route/shape failures as source-traceable fixtures. Likely follow-ups
-are migration edge-case response shapes, saved-object repository search
-variants, and any plugin startup metadata that appears in real traffic.
+Broaden the browser-driven smoke around migration edge cases, dashboard editing,
+saved-object relationship/delete/export actions, and plugin-specific
+application pages. Capture remaining route/shape failures as source-traceable
+fixtures. Likely follow-ups are migration edge-case response shapes,
+saved-object repository search variants, and plugin startup metadata that
+appears in real traffic.

@@ -54,8 +54,27 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
             _ => route("tasks.get", Tier::Unsupported, AccessClass::Admin),
         };
     }
+    if segments.as_slice() == ["_plugins", "_security", "api", "account"] {
+        return match *method {
+            Method::GET => route("security.account", Tier::Mocked, AccessClass::Read),
+            _ => route("security.account", Tier::Unsupported, AccessClass::Admin),
+        };
+    }
     if control_namespace(&segments) {
         return route("security_or_control", Tier::Unsupported, AccessClass::Admin);
+    }
+
+    if segments.as_slice() == ["_plugins", "_query", "_datasources"] {
+        return match *method {
+            Method::GET => route("query.datasources", Tier::Mocked, AccessClass::Read),
+            _ => route("query.datasources", Tier::Unsupported, AccessClass::Write),
+        };
+    }
+    if matches!(
+        segments.as_slice(),
+        ["_plugins", "_query", "_datasources", ..]
+    ) {
+        return unsupported_method("query.datasources", method);
     }
 
     if path == "/_reindex" {
@@ -107,6 +126,19 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
     }
     if path == "/_cluster/stats" {
         return get_only(method, "cluster.stats", Tier::Implemented);
+    }
+    if matches!(segments.as_slice(), ["_resolve", "index", _]) {
+        return match *method {
+            Method::GET => route(
+                "indices.resolve_index",
+                Tier::Implemented,
+                AccessClass::Read,
+            ),
+            _ => unsupported_method("indices.resolve_index", method),
+        };
+    }
+    if segments.first() == Some(&"_resolve") {
+        return unsupported_method("indices.resolve_index", method);
     }
     if matches!(segments.as_slice(), ["_analyze"] | [_, "_analyze"]) {
         return match *method {

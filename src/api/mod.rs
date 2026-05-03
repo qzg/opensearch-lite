@@ -7,7 +7,7 @@ pub mod indices;
 pub mod search;
 pub mod templates;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use http::Method;
 use serde_json::{json, Value};
@@ -135,6 +135,10 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     }
     if request.path == "/_cluster/stats" {
         return handle_cluster_stats(&state);
+    }
+    if matches!(parts.as_slice(), ["_resolve", "index", _]) {
+        let name = decode_path_param(parts[2]);
+        return handle_resolve_index(&state, &request, &name);
     }
     if matches!(parts.as_slice(), ["_analyze"] | [_, "_analyze"]) {
         return handle_analyze(&request);
@@ -280,6 +284,42 @@ fn handle_best_effort(state: AppState, request: Request, api_name: &str) -> Resp
 fn handle_mocked(request: Request, api_name: &str) -> Response {
     logging::approximation(api_name, &request.path);
     match api_name {
+        "security.account" => {
+            let (user_name, backend_roles) = match request.security.principal.as_ref() {
+                Some(principal) => (
+                    principal.username.clone(),
+                    principal
+                        .roles
+                        .iter()
+                        .map(|role| role.as_str().to_string())
+                        .collect::<Vec<_>>(),
+                ),
+                None => (
+                    "opensearch_lite_local".to_string(),
+                    vec!["admin".to_string()],
+                ),
+            };
+            Response::json(
+                200,
+                json!({
+                    "user_name": user_name.clone(),
+                    "user_id": user_name,
+                    "user_requested_tenant": null,
+                    "backend_roles": backend_roles,
+                    "roles": backend_roles,
+                    "security_roles": backend_roles,
+                    "tenants": {
+                        "global_tenant": true
+                    },
+                    "custom_attribute_names": [],
+                    "is_reserved": false,
+                    "is_hidden": false,
+                    "is_internal_user": request.security.principal.is_none()
+                }),
+            )
+            .compatibility_signal(api_name, "mocked")
+        }
+        "query.datasources" => Response::json(200, json!([])).compatibility_signal(api_name, "mocked"),
         "cluster.allocation_explain" => Response::json(
             200,
             json!({
@@ -897,6 +937,16 @@ fn handle_field_caps(state: &AppState, request: &Request, first: Option<&str>) -
 
 fn handle_cluster_stats(state: &AppState) -> Response {
     match state.store.read_database(cluster_stats_response) {
+        Ok(body) => Response::json(200, body),
+        Err(error) => store_error(error),
+    }
+}
+
+fn handle_resolve_index(state: &AppState, request: &Request, name: &str) -> Response {
+    match state
+        .store
+        .read_database(|db| resolve_index_response(db, request, name))
+    {
         Ok(body) => Response::json(200, body),
         Err(error) => store_error(error),
     }
@@ -3228,6 +3278,109 @@ fn cat_indices(state: &AppState, request: &Request, api_name: &str) -> Response 
     }) {
         Ok(Ok(rows)) => Response::json(200, rows).compatibility_signal(api_name, "best_effort"),
         Ok(Err(error)) | Err(error) => store_error(error),
+    }
+}
+
+fn resolve_index_response(db: &Database, request: &Request, name: &str) -> Value {
+    let expand_values = comma_query_values(request.query_value("expand_wildcards"))
+        .unwrap_or_else(|| vec!["open".to_string()]);
+    let expand_none = expand_values.iter().any(|value| value == "none");
+    let include_hidden = expand_values
+        .iter()
+        .any(|value| matches!(value.as_str(), "all" | "hidden"));
+    let patterns = name
+        .split(',')
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .map(|pattern| {
+            if pattern == "_all" {
+                "*".to_string()
+            } else {
+                pattern.to_string()
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut index_names = BTreeSet::new();
+    let mut alias_targets = BTreeMap::new();
+    for pattern in patterns {
+        let allows_hidden = include_hidden || pattern.starts_with('.');
+        if pattern.contains('*') {
+            if expand_none {
+                continue;
+            }
+            for index_name in db.indexes.keys() {
+                if wildcard_matches(&pattern, index_name)
+                    && resolve_visible_index(index_name, allows_hidden)
+                {
+                    index_names.insert(index_name.clone());
+                }
+            }
+            collect_matching_alias_targets(db, &pattern, allows_hidden, true, &mut alias_targets);
+        } else {
+            if db.indexes.contains_key(&pattern) && resolve_visible_index(&pattern, allows_hidden) {
+                index_names.insert(pattern.clone());
+            }
+            collect_matching_alias_targets(db, &pattern, allows_hidden, false, &mut alias_targets);
+        }
+    }
+
+    let indices = index_names
+        .iter()
+        .filter_map(|name| db.indexes.get(name))
+        .map(|index| {
+            json!({
+                "name": index.name.clone(),
+                "aliases": index.aliases.iter().cloned().collect::<Vec<_>>(),
+                "attributes": ["open"]
+            })
+        })
+        .collect::<Vec<_>>();
+    let aliases = alias_targets
+        .iter()
+        .map(|(alias, indices)| {
+            json!({
+                "name": alias,
+                "indices": indices.iter().cloned().collect::<Vec<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "indices": indices,
+        "aliases": aliases,
+        "data_streams": []
+    })
+}
+
+fn resolve_visible_index(index_name: &str, include_hidden: bool) -> bool {
+    include_hidden || !index_name.starts_with('.')
+}
+
+fn collect_matching_alias_targets(
+    db: &Database,
+    pattern: &str,
+    include_hidden: bool,
+    wildcard: bool,
+    alias_targets: &mut BTreeMap<String, BTreeSet<String>>,
+) {
+    for index in db.indexes.values() {
+        if !resolve_visible_index(&index.name, include_hidden) {
+            continue;
+        }
+        for alias in &index.aliases {
+            let matches = if wildcard {
+                wildcard_matches(pattern, alias)
+            } else {
+                alias == pattern
+            };
+            if matches {
+                alias_targets
+                    .entry(alias.clone())
+                    .or_default()
+                    .insert(index.name.clone());
+            }
+        }
     }
 }
 

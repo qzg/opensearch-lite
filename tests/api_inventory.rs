@@ -323,7 +323,12 @@ fn dashboards_metadata_routes_have_specific_read_and_write_classes() {
         assert_eq!(route.access, AccessClass::Read, "{method} {path}");
     }
 
-    for path in ["/_cat/plugins", "/_cat/templates", "/_cluster/stats"] {
+    for path in [
+        "/_cat/plugins",
+        "/_cat/templates",
+        "/_cluster/stats",
+        "/_resolve/index/orders*",
+    ] {
         let route = classify(&Method::GET, path);
         assert_eq!(route.tier, Tier::Implemented, "{path}");
         assert_eq!(route.access, AccessClass::Read, "{path}");
@@ -403,6 +408,16 @@ fn dashboards_metadata_wrong_methods_fail_closed() {
         (Method::PUT, "/_field_caps", "field_caps"),
         (Method::POST, "/_cat/plugins", "cat.plugins"),
         (Method::DELETE, "/_cluster/stats", "cluster.stats"),
+        (
+            Method::POST,
+            "/_resolve/index/orders*",
+            "indices.resolve_index",
+        ),
+        (
+            Method::POST,
+            "/_plugins/_query/_datasources",
+            "query.datasources",
+        ),
     ] {
         let route = classify(&method, path);
         assert_eq!(route.api_name, api_name, "{method} {path}");
@@ -422,6 +437,27 @@ fn mocked_and_write_fallback_routes_are_explicit_tiers() {
     assert_eq!(cluster_settings.api_name, "cluster.put_settings");
     assert_eq!(cluster_settings.tier, Tier::Mocked);
     assert_eq!(cluster_settings.access, AccessClass::Admin);
+
+    let security_account = classify(&Method::GET, "/_plugins/_security/api/account");
+    assert_eq!(security_account.api_name, "security.account");
+    assert_eq!(security_account.tier, Tier::Mocked);
+    assert_eq!(security_account.access, AccessClass::Read);
+
+    let security_account_write = classify(&Method::PUT, "/_plugins/_security/api/account");
+    assert_eq!(security_account_write.api_name, "security.account");
+    assert_eq!(security_account_write.tier, Tier::Unsupported);
+    assert_eq!(security_account_write.access, AccessClass::Admin);
+
+    let query_datasources = classify(&Method::GET, "/_plugins/_query/_datasources");
+    assert_eq!(query_datasources.api_name, "query.datasources");
+    assert_eq!(query_datasources.tier, Tier::Mocked);
+    assert_eq!(query_datasources.access, AccessClass::Read);
+
+    let malformed_query_datasources = classify(&Method::GET, "/_plugins/_query/_datasources/extra");
+    assert_eq!(malformed_query_datasources.api_name, "query.datasources");
+    assert_eq!(malformed_query_datasources.tier, Tier::Unsupported);
+    assert_eq!(malformed_query_datasources.access, AccessClass::Read);
+    assert_ne!(malformed_query_datasources.tier, Tier::AgentRead);
 
     for (method, path, api_name) in [
         (Method::POST, "/_cluster/reroute", "cluster.reroute"),

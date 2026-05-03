@@ -216,6 +216,49 @@ async fn mocked_local_noop_routes_return_positive_compatibility_response() {
 }
 
 #[tokio::test]
+async fn dashboards_browser_boot_mocked_routes_return_expected_shapes() {
+    let state = ephemeral_state();
+
+    let account = call(
+        &state,
+        Method::GET,
+        "/_plugins/_security/api/account",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(account.status, 200);
+    assert_eq!(
+        account
+            .headers
+            .get("x-opensearch-lite-api")
+            .map(String::as_str),
+        Some("security.account")
+    );
+    let account_body = account.body.unwrap();
+    assert_eq!(account_body["user_name"], "opensearch_lite_local");
+    assert_eq!(account_body["user_id"], "opensearch_lite_local");
+    assert_eq!(account_body["backend_roles"], json!(["admin"]));
+    assert_eq!(account_body["tenants"]["global_tenant"], true);
+
+    let datasources = call(
+        &state,
+        Method::GET,
+        "/_plugins/_query/_datasources",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(datasources.status, 200);
+    assert_eq!(
+        datasources
+            .headers
+            .get("x-opensearch-lite-api")
+            .map(String::as_str),
+        Some("query.datasources")
+    );
+    assert_eq!(datasources.body.unwrap(), json!([]));
+}
+
+#[tokio::test]
 async fn mocked_cluster_settings_rejects_malformed_json() {
     let state = ephemeral_state();
     let mut headers = HeaderMap::new();
