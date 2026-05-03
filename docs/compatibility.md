@@ -75,6 +75,9 @@ Security does not make best-effort or fallback routes look implemented.
   `avg`, `sum`, `cardinality`, `stats`, and `top_hits`
 - Process-local scroll and clear-scroll cursors for migration-style batched
   saved-object reads
+- Process-local PIT create/list/delete lifecycle APIs with retained frozen
+  database views; `_search` with a `pit` object still fails closed until
+  PIT-backed search and `search_after` are implemented
 - Native local snapshot repository management: repository create/get/delete,
   verify/cleanup, and snapshot create/get/delete under `--data-dir/repositories`
 - Reindex with synthetic completed task metadata for `tasks.get`
@@ -84,7 +87,8 @@ Unsupported mutating APIs are never routed to runtime fallback.
 Mocked local no-op APIs return 200-series OpenSearch-shaped responses because
 the operation has no meaningful single-node effect. Security/control,
 unsupported snapshot restore/clone/status APIs, dangling-index, and destructive
-filesystem-like APIs still fail closed.
+filesystem-like APIs still fail closed. PIT lifecycle is implemented as a
+read-class search context operation, but PIT-backed search is not yet claimed.
 
 ## Dashboards Compatibility
 
@@ -145,6 +149,10 @@ OpenSearch-shaped API snapshots are separate local repository artifacts under
 `index.latest` plus readable `index-000001.json`-style manifest files and
 content-addressed database blobs. These files are for local development
 archives; snapshot restore is still unsupported.
+
+PIT contexts are runtime-only and intentionally disappear on process restart.
+They retain bounded in-memory database views and are not written to durable
+state.
 
 On startup, durable mode also repairs legacy Dashboards saved-object IDs that
 were previously stored in encoded path form, such as

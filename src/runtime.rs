@@ -4,13 +4,17 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{json, Value};
 
+use crate::storage::Database;
+
 const MAX_SCROLL_CONTEXTS: usize = 32;
 const SCROLL_TTL: Duration = Duration::from_secs(15 * 60);
+const MAX_PIT_CONTEXTS: usize = 16;
+const MAX_PIT_RETAINED_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeState {
@@ -21,6 +25,7 @@ pub struct RuntimeState {
 #[derive(Debug, Default)]
 struct RuntimeInner {
     scrolls: BTreeMap<String, ScrollCursor>,
+    pits: BTreeMap<String, PitContext>,
     tasks: BTreeMap<String, TaskRecord>,
 }
 
@@ -42,6 +47,35 @@ pub struct ScrollPage {
     pub hits: Vec<Value>,
     pub total: Value,
     pub max_score: Value,
+}
+
+#[derive(Debug, Clone)]
+struct PitContext {
+    database: Database,
+    created_at_unix_millis: u64,
+    expires_at: Instant,
+    keep_alive: Duration,
+    bytes: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PitCreateResult {
+    pub pit_id: String,
+    pub creation_time: u64,
+    pub total_shards: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PitInfo {
+    pub pit_id: String,
+    pub creation_time: u64,
+    pub keep_alive_millis: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PitDeleteResult {
+    pub pit_id: String,
+    pub successful: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +197,106 @@ impl RuntimeState {
             .count()
     }
 
+    pub fn create_pit(
+        &self,
+        database: Database,
+        keep_alive: Duration,
+        total_shards: u64,
+        max_bytes: usize,
+    ) -> Result<PitCreateResult, RuntimeError> {
+        let bytes = estimate_database_bytes(&database);
+        if bytes > max_bytes || bytes > MAX_PIT_RETAINED_BYTES {
+            return Err(RuntimeError::new(
+                429,
+                "resource_limit_exception",
+                format!("PIT context would retain {bytes} bytes, exceeding the local PIT budget"),
+            ));
+        }
+
+        let pit_id = self.next_runtime_id("pit");
+        let creation_time = now_millis();
+        let mut inner = self.inner.lock().expect("runtime lock is not poisoned");
+        purge_expired_pits(&mut inner);
+        if inner.pits.len() >= MAX_PIT_CONTEXTS
+            || total_pit_bytes(&inner).saturating_add(bytes) > max_bytes
+            || total_pit_bytes(&inner).saturating_add(bytes) > MAX_PIT_RETAINED_BYTES
+        {
+            return Err(RuntimeError::new(
+                429,
+                "resource_limit_exception",
+                "maximum local PIT contexts reached",
+            ));
+        }
+
+        inner.pits.insert(
+            pit_id.clone(),
+            PitContext {
+                database,
+                created_at_unix_millis: creation_time,
+                expires_at: Instant::now() + keep_alive,
+                keep_alive,
+                bytes,
+            },
+        );
+
+        Ok(PitCreateResult {
+            pit_id,
+            creation_time,
+            total_shards,
+        })
+    }
+
+    pub fn list_pits(&self) -> Vec<PitInfo> {
+        let mut inner = self.inner.lock().expect("runtime lock is not poisoned");
+        purge_expired_pits(&mut inner);
+        inner
+            .pits
+            .iter()
+            .map(|(pit_id, pit)| PitInfo {
+                pit_id: pit_id.clone(),
+                creation_time: pit.created_at_unix_millis,
+                keep_alive_millis: duration_millis(pit.keep_alive),
+            })
+            .collect()
+    }
+
+    pub fn delete_pits(&self, pit_ids: &[String]) -> Vec<PitDeleteResult> {
+        let mut inner = self.inner.lock().expect("runtime lock is not poisoned");
+        purge_expired_pits(&mut inner);
+        pit_ids
+            .iter()
+            .map(|pit_id| {
+                inner.pits.remove(pit_id);
+                PitDeleteResult {
+                    pit_id: pit_id.clone(),
+                    successful: true,
+                }
+            })
+            .collect()
+    }
+
+    pub fn delete_all_pits(&self) -> Vec<PitDeleteResult> {
+        let mut inner = self.inner.lock().expect("runtime lock is not poisoned");
+        purge_expired_pits(&mut inner);
+        let pit_ids = inner.pits.keys().cloned().collect::<Vec<_>>();
+        pit_ids
+            .into_iter()
+            .map(|pit_id| {
+                inner.pits.remove(&pit_id);
+                PitDeleteResult {
+                    pit_id,
+                    successful: true,
+                }
+            })
+            .collect()
+    }
+
+    pub fn pit_database(&self, pit_id: &str) -> Option<Database> {
+        let mut inner = self.inner.lock().expect("runtime lock is not poisoned");
+        purge_expired_pits(&mut inner);
+        inner.pits.get(pit_id).map(|pit| pit.database.clone())
+    }
+
     pub fn record_completed_task(&self, action: &str, response: Value) -> String {
         let id = self.next_runtime_id("task");
         let record = TaskRecord {
@@ -237,6 +371,11 @@ fn purge_expired_scrolls(inner: &mut RuntimeInner) {
         .retain(|_, cursor| now.duration_since(cursor.last_accessed) < SCROLL_TTL);
 }
 
+fn purge_expired_pits(inner: &mut RuntimeInner) {
+    let now = Instant::now();
+    inner.pits.retain(|_, pit| pit.expires_at > now);
+}
+
 fn evict_scrolls_for_budget(inner: &mut RuntimeInner, incoming_bytes: usize, max_bytes: usize) {
     while (inner.scrolls.len() >= MAX_SCROLL_CONTEXTS
         || total_scroll_bytes(inner).saturating_add(incoming_bytes) > max_bytes)
@@ -262,12 +401,22 @@ fn total_scroll_bytes(inner: &RuntimeInner) -> usize {
         .sum::<usize>()
 }
 
+fn total_pit_bytes(inner: &RuntimeInner) -> usize {
+    inner.pits.values().map(|pit| pit.bytes).sum::<usize>()
+}
+
 fn estimate_scroll_bytes(hits: &[Value], total: &Value, max_score: &Value) -> usize {
     hits.iter()
         .map(estimate_value_bytes)
         .sum::<usize>()
         .saturating_add(estimate_value_bytes(total))
         .saturating_add(estimate_value_bytes(max_score))
+}
+
+fn estimate_database_bytes(database: &Database) -> usize {
+    serde_json::to_vec(database)
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX / 4)
 }
 
 fn estimate_value_bytes(value: &Value) -> usize {
@@ -279,6 +428,17 @@ fn estimate_value_bytes(value: &Value) -> usize {
 fn page_hits(hits: &[Value], position: usize, batch_size: usize) -> (Vec<Value>, usize) {
     let end = position.saturating_add(batch_size).min(hits.len());
     (hits[position.min(hits.len())..end].to_vec(), end)
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(duration_millis)
+        .unwrap_or_default()
+}
+
+fn duration_millis(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 #[cfg(test)]

@@ -7,7 +7,10 @@ pub mod indices;
 pub mod search;
 pub mod templates;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 
 use http::Method;
 use serde_json::{json, Value};
@@ -100,6 +103,9 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
         } else {
             handle_scroll(&state, &request, parts.last().copied())
         };
+    }
+    if pit_path(&parts) {
+        return handle_pit(&state, &request, &parts);
     }
     if parts.first() == Some(&"_snapshot") {
         return handle_snapshot(&state, &request, &parts).await;
@@ -662,6 +668,81 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
             }
         }
         _ => unsupported("snapshot"),
+    }
+}
+
+fn handle_pit(state: &AppState, request: &Request, parts: &[&str]) -> Response {
+    match (request.method.clone(), parts) {
+        (Method::POST, [index, "_search", "point_in_time"]) => {
+            let keep_alive = match keep_alive_from_request(request) {
+                Ok(keep_alive) => keep_alive,
+                Err(response) => return response,
+            };
+            let indices = path_indices(Some(index), "_search");
+            let (database, total_shards) =
+                match state.store.read_database(|db| pit_snapshot(db, &indices)) {
+                    Ok(Ok(snapshot)) => snapshot,
+                    Ok(Err(error)) => return store_error(error),
+                    Err(error) => return store_error(error),
+                };
+            let pit = match state.runtime.create_pit(
+                database,
+                keep_alive,
+                total_shards,
+                pit_memory_budget(state),
+            ) {
+                Ok(pit) => pit,
+                Err(error) => {
+                    return open_search_error(
+                        error.status,
+                        error.error_type,
+                        error.reason,
+                        Some("Delete old PIT contexts or create the PIT over fewer documents."),
+                    )
+                }
+            };
+            Response::json(
+                200,
+                json!({
+                    "pit_id": pit.pit_id,
+                    "_shards": {
+                        "total": pit.total_shards,
+                        "successful": pit.total_shards,
+                        "skipped": 0,
+                        "failed": 0
+                    },
+                    "creation_time": pit.creation_time
+                }),
+            )
+        }
+        (Method::GET, ["_search", "point_in_time", "_all"]) => {
+            let pits = state
+                .runtime
+                .list_pits()
+                .into_iter()
+                .map(|pit| {
+                    json!({
+                        "pit_id": pit.pit_id,
+                        "creation_time": pit.creation_time,
+                        "keep_alive": pit.keep_alive_millis
+                    })
+                })
+                .collect::<Vec<_>>();
+            Response::json(200, json!({ "pits": pits }))
+        }
+        (Method::DELETE, ["_search", "point_in_time", "_all"]) => {
+            let pits = pit_delete_body(state.runtime.delete_all_pits());
+            Response::json(200, pits)
+        }
+        (Method::DELETE, ["_search", "point_in_time"]) => {
+            let pit_ids = match pit_ids_from_request(request) {
+                Ok(pit_ids) => pit_ids,
+                Err(response) => return response,
+            };
+            let pits = pit_delete_body(state.runtime.delete_pits(&pit_ids));
+            Response::json(200, pits)
+        }
+        _ => unsupported("point_in_time"),
     }
 }
 
@@ -2294,6 +2375,14 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
         Ok(body) => body,
         Err(error) => return parse_error(error),
     };
+    if body.get("pit").is_some() {
+        return open_search_error(
+            501,
+            "opensearch_lite_unsupported_api_exception",
+            "OpenSearch Lite can create, list, and delete PIT contexts, but PIT-backed search is not implemented yet",
+            Some("Use normal search or scroll for now; PIT-backed search is planned with search_after support."),
+        );
+    }
     if let Some(source_filter) = source_filter_from_query(&request.query) {
         body["_source"] = source_filter;
     }
@@ -4170,6 +4259,142 @@ fn path_indices(path_index: Option<&str>, suffix: &str) -> Vec<String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn pit_path(parts: &[&str]) -> bool {
+    matches!(
+        parts,
+        ["_search", "point_in_time", ..] | [_, "_search", "point_in_time", ..]
+    )
+}
+
+fn pit_memory_budget(state: &AppState) -> usize {
+    state.config.memory_limit_bytes.min(64 * 1024 * 1024)
+}
+
+fn keep_alive_from_request(request: &Request) -> Result<Duration, Response> {
+    let Some(raw) = request.query_value("keep_alive") else {
+        return Err(parse_error(
+            "create PIT requires a [keep_alive] query parameter".to_string(),
+        ));
+    };
+    parse_keep_alive(raw).map_err(parse_error)
+}
+
+fn parse_keep_alive(raw: &str) -> Result<Duration, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err("keep_alive must not be empty".to_string());
+    }
+    let digits = raw
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return Err(format!("invalid keep_alive [{raw}]"));
+    }
+    let value = digits
+        .parse::<u64>()
+        .map_err(|_| format!("invalid keep_alive [{raw}]"))?;
+    if value == 0 {
+        return Err("keep_alive must be positive".to_string());
+    }
+    let unit = &raw[digits.len()..];
+    let millis = match unit {
+        "" | "ms" => value,
+        "s" => value.saturating_mul(1_000),
+        "m" => value.saturating_mul(60_000),
+        "h" => value.saturating_mul(3_600_000),
+        "d" => value.saturating_mul(86_400_000),
+        _ => return Err(format!("unsupported keep_alive unit [{unit}]")),
+    };
+    Ok(Duration::from_millis(millis))
+}
+
+fn pit_snapshot(db: &Database, indices: &[String]) -> StoreResult<(Database, u64)> {
+    validate_search_indices(db, indices)?;
+    let resolved = resolve_pit_indices(db, indices);
+    let keep = resolved.iter().cloned().collect::<BTreeSet<_>>();
+    let mut snapshot = db.clone();
+    snapshot.indexes.retain(|name, _| keep.contains(name));
+    snapshot
+        .aliases
+        .retain(|_, alias| snapshot.indexes.contains_key(&alias.index));
+    let total_shards = snapshot.indexes.values().map(index_total_shards).sum();
+    Ok((snapshot, total_shards))
+}
+
+fn resolve_pit_indices(db: &Database, indices: &[String]) -> Vec<String> {
+    if indices.is_empty()
+        || indices
+            .iter()
+            .any(|index| matches!(index.as_str(), "_all" | "*"))
+    {
+        return db.indexes.keys().cloned().collect();
+    }
+    let mut resolved = Vec::new();
+    for index in indices {
+        if index.contains('*') {
+            resolved.extend(
+                db.indexes
+                    .keys()
+                    .filter(|name| wildcard_matches(index, name))
+                    .cloned(),
+            );
+        } else {
+            resolved.extend(db.resolve_indices(index));
+        }
+    }
+    resolved.sort();
+    resolved.dedup();
+    resolved
+}
+
+fn pit_ids_from_request(request: &Request) -> Result<Vec<String>, Response> {
+    let body = request.body_json().map_err(parse_error)?;
+    let Some(value) = body.get("pit_id").or_else(|| body.get("pitId")) else {
+        return Err(parse_error("delete PIT requires [pit_id]".to_string()));
+    };
+    let mut ids = match value {
+        Value::String(value) => value
+            .split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        Value::Array(values) => values
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        _ => {
+            return Err(parse_error(
+                "delete PIT [pit_id] must be a string or array of strings".to_string(),
+            ))
+        }
+    };
+    ids.sort();
+    ids.dedup();
+    if ids.is_empty() {
+        return Err(parse_error(
+            "delete PIT requires non-empty [pit_id]".to_string(),
+        ));
+    }
+    Ok(ids)
+}
+
+fn pit_delete_body(results: Vec<crate::runtime::PitDeleteResult>) -> Value {
+    json!({
+        "pits": results
+            .into_iter()
+            .map(|result| json!({
+                "successful": result.successful,
+                "pit_id": result.pit_id
+            }))
+            .collect::<Vec<_>>()
+    })
 }
 
 fn scroll_id_from_request(request: &Request) -> Option<String> {

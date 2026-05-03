@@ -160,6 +160,61 @@ fn snapshot_routes_are_admin_implemented_or_fail_closed() {
 }
 
 #[test]
+fn pit_routes_are_read_implemented_or_fail_closed() {
+    let inventory = inventory();
+    for name in [
+        "create_pit",
+        "delete_pit",
+        "delete_all_pits",
+        "get_all_pits",
+    ] {
+        let route = inventory
+            .iter()
+            .find(|route| route.name == name)
+            .unwrap_or_else(|| panic!("missing route inventory entry {name}"));
+        assert_eq!(route.tier, Tier::Implemented, "{name}");
+        assert_eq!(route.access, AccessClass::Read, "{name}");
+    }
+
+    for (method, path, api_name) in [
+        (Method::POST, "/orders/_search/point_in_time", "create_pit"),
+        (Method::DELETE, "/_search/point_in_time", "delete_pit"),
+        (Method::GET, "/_search/point_in_time/_all", "get_all_pits"),
+        (
+            Method::DELETE,
+            "/_search/point_in_time/_all",
+            "delete_all_pits",
+        ),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Implemented, "{method} {path}");
+        assert_eq!(route.access, AccessClass::Read, "{method} {path}");
+    }
+
+    for (method, path, api_name) in [
+        (Method::GET, "/orders/_search/point_in_time", "create_pit"),
+        (Method::POST, "/_search/point_in_time", "delete_pit"),
+        (
+            Method::GET,
+            "/_search/point_in_time/_all/extra",
+            "get_all_pits",
+        ),
+        (
+            Method::POST,
+            "/orders/_search/point_in_time/extra",
+            "create_pit",
+        ),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Unsupported, "{method} {path}");
+        assert_eq!(route.access, AccessClass::Read, "{method} {path}");
+        assert_ne!(route.tier, Tier::AgentRead, "{method} {path}");
+    }
+}
+
+#[test]
 fn vendored_opensearch_36_rest_spec_is_present() {
     let api_dir = std::path::Path::new("vendor/opensearch-rest-api-spec/rest-api-spec/api");
     let count = std::fs::read_dir(api_dir)

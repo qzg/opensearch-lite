@@ -57,6 +57,9 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
     if segments.first() == Some(&"_snapshot") {
         return classify_snapshot(method, &segments);
     }
+    if pit_family(&segments) {
+        return classify_pit(method, &segments);
+    }
     if segments.as_slice() == ["_plugins", "_security", "api", "account"] {
         return match *method {
             Method::GET => route("security.account", Tier::Mocked, AccessClass::Read),
@@ -744,6 +747,38 @@ fn classify_snapshot(method: &Method, segments: &[&str]) -> RouteMatch {
             _ => route("snapshot.get", Tier::Unsupported, AccessClass::Admin),
         },
         _ => route("snapshot", Tier::Unsupported, AccessClass::Admin),
+    }
+}
+
+fn pit_family(segments: &[&str]) -> bool {
+    matches!(
+        segments,
+        ["_search", "point_in_time", ..] | [_, "_search", "point_in_time", ..]
+    )
+}
+
+fn classify_pit(method: &Method, segments: &[&str]) -> RouteMatch {
+    match segments {
+        [_, "_search", "point_in_time"] => match *method {
+            Method::POST => route("create_pit", Tier::Implemented, AccessClass::Read),
+            _ => route("create_pit", Tier::Unsupported, AccessClass::Read),
+        },
+        ["_search", "point_in_time"] => match *method {
+            Method::DELETE => route("delete_pit", Tier::Implemented, AccessClass::Read),
+            _ => route("delete_pit", Tier::Unsupported, AccessClass::Read),
+        },
+        ["_search", "point_in_time", "_all"] => match *method {
+            Method::GET => route("get_all_pits", Tier::Implemented, AccessClass::Read),
+            Method::DELETE => route("delete_all_pits", Tier::Implemented, AccessClass::Read),
+            _ => route("get_all_pits", Tier::Unsupported, AccessClass::Read),
+        },
+        [_, "_search", "point_in_time", ..] => {
+            route("create_pit", Tier::Unsupported, AccessClass::Read)
+        }
+        ["_search", "point_in_time", ..] => {
+            route("get_all_pits", Tier::Unsupported, AccessClass::Read)
+        }
+        _ => route("point_in_time", Tier::Unsupported, AccessClass::Read),
     }
 }
 

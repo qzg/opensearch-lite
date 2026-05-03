@@ -8,9 +8,9 @@ Generated from `opensearch_lite::api_spec::inventory()` over the pinned OpenSear
 | --- | ---: | ---: |
 | Route shapes in inventory | 267 | 100.0% |
 | Unique API names | 167 | - |
-| Deterministic local responses | 176 | 65.9% |
-| Runtime fallback eligible | 62 | 23.2% |
-| Closed or outside product identity | 29 | 10.9% |
+| Deterministic local responses | 180 | 67.4% |
+| Runtime fallback eligible | 61 | 22.8% |
+| Closed or outside product identity | 26 | 9.7% |
 
 Deterministic local responses combine `implemented`, `best_effort`, and `mocked` routes. Fallback-eligible routes still require runtime agent configuration and are not deterministic local parity.
 
@@ -19,9 +19,9 @@ Deterministic local responses combine `implemented`, `best_effort`, and `mocked`
 ```mermaid
 flowchart LR
   all["OpenSearch route shapes\n267"]
-  deterministic["Deterministic local\n176 (65.9%)"]
-  fallback["Fallback eligible\n62 (23.2%)"]
-  closed["Closed / unsupported\n29 (10.9%)"]
+  deterministic["Deterministic local\n180 (67.4%)"]
+  fallback["Fallback eligible\n61 (22.8%)"]
+  closed["Closed / unsupported\n26 (9.7%)"]
   all --> deterministic
   all --> fallback
   all --> closed
@@ -31,37 +31,37 @@ flowchart LR
 
 ```mermaid
 pie showData
-  "Implemented" : 109
+  "Implemented" : 113
   "Best effort" : 44
   "Mocked" : 23
-  "Agent read fallback" : 61
+  "Agent read fallback" : 60
   "Agent write fallback" : 1
-  "Unsupported" : 29
+  "Unsupported" : 26
 ```
 
 | Tier | Count | Share |
 | --- | ---: | ---: |
-| Implemented | 109 | 40.8% |
+| Implemented | 113 | 42.3% |
 | Best effort | 44 | 16.5% |
 | Mocked | 23 | 8.6% |
-| Agent read fallback | 61 | 22.8% |
+| Agent read fallback | 60 | 22.5% |
 | Agent write fallback | 1 | 0.4% |
-| Unsupported | 29 | 10.9% |
+| Unsupported | 26 | 9.7% |
 
 ## Access Mix
 
 ```mermaid
 pie showData
   "Admin" : 29
-  "Read" : 153
-  "Write" : 85
+  "Read" : 156
+  "Write" : 82
 ```
 
 | Access class | Count | Share |
 | --- | ---: | ---: |
 | Admin | 29 | 10.9% |
-| Read | 153 | 57.3% |
-| Write | 85 | 31.8% |
+| Read | 156 | 58.4% |
+| Write | 82 | 30.7% |
 
 ## Family Coverage
 
@@ -90,6 +90,10 @@ xychart-beta
 | `core` | 2 | 2 | 0 | 0 | 2 | 0 | 0 |
 | `field_caps` | 2 | 2 | 0 | 0 | 2 | 0 | 0 |
 | `tasks` | 4 | 1 | 1 | 2 | 1 | 0 | 0 |
+| `create_pit` | 1 | 1 | 0 | 0 | 1 | 0 | 0 |
+| `delete_all_pits` | 1 | 1 | 0 | 0 | 1 | 0 | 0 |
+| `delete_pit` | 1 | 1 | 0 | 0 | 1 | 0 | 0 |
+| `get_all_pits` | 1 | 1 | 0 | 0 | 1 | 0 | 0 |
 | `query` | 1 | 1 | 0 | 0 | 0 | 0 | 1 |
 | `security` | 1 | 1 | 0 | 0 | 0 | 0 | 1 |
 | `dangling_indices` | 3 | 0 | 1 | 2 | 0 | 0 | 0 |
@@ -101,10 +105,6 @@ xychart-beta
 | `search_shards` | 2 | 0 | 2 | 0 | 0 | 0 | 0 |
 | `search_template` | 2 | 0 | 2 | 0 | 0 | 0 | 0 |
 | `termvectors` | 2 | 0 | 2 | 0 | 0 | 0 | 0 |
-| `create_pit` | 1 | 0 | 0 | 1 | 0 | 0 | 0 |
-| `delete_all_pits` | 1 | 0 | 0 | 1 | 0 | 0 | 0 |
-| `delete_pit` | 1 | 0 | 0 | 1 | 0 | 0 | 0 |
-| `get_all_pits` | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | `get_script_context` | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | `get_script_languages` | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | `scripts_painless_execute` | 1 | 0 | 0 | 1 | 0 | 0 | 0 |
