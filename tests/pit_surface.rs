@@ -162,7 +162,7 @@ async fn pit_create_and_delete_validate_inputs() {
 }
 
 #[tokio::test]
-async fn pit_search_fails_closed_until_frozen_search_is_implemented() {
+async fn pit_search_uses_frozen_view_and_refreshes_keep_alive() {
     let state = ephemeral_state();
     seed_orders(&state).await;
 
@@ -189,14 +189,89 @@ async fn pit_search_fails_closed_until_frozen_search_is_implemented() {
         Method::POST,
         "/_search",
         json!({
-            "pit": { "id": pit_id },
+            "pit": { "id": pit_id, "keep_alive": "10m" },
             "query": { "match_all": {} }
         }),
     )
     .await;
-    assert_eq!(search.status, 501);
+    assert_eq!(search.status, 200);
+    let body = search.body.unwrap();
+    assert_eq!(body["pit_id"], pit_id);
+    assert_eq!(body["hits"]["total"]["value"], 1);
+    assert_eq!(body["hits"]["hits"][0]["_id"], "1");
+
+    let live = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({ "query": { "match_all": {} } }),
+    )
+    .await;
+    assert_eq!(live.status, 200);
+    assert_eq!(live.body.unwrap()["hits"]["total"]["value"], 2);
+
+    let list = call(
+        &state,
+        Method::GET,
+        "/_search/point_in_time/_all",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(list.status, 200);
+    assert_eq!(list.body.unwrap()["pits"][0]["keep_alive"], 600_000);
+}
+
+#[tokio::test]
+async fn pit_search_rejects_missing_conflicting_and_not_yet_supported_shapes() {
+    let state = ephemeral_state();
+    seed_orders(&state).await;
+
+    let missing = call(
+        &state,
+        Method::POST,
+        "/_search",
+        json!({ "pit": { "id": "missing" }, "query": { "match_all": {} } }),
+    )
+    .await;
+    assert_eq!(missing.status, 404);
     assert_eq!(
-        search.body.unwrap()["error"]["type"],
+        missing.body.unwrap()["error"]["type"],
+        "search_context_missing_exception"
+    );
+
+    let create = call(
+        &state,
+        Method::POST,
+        "/orders/_search/point_in_time?keep_alive=1m",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(create.status, 200);
+    let pit_id = create.body.unwrap()["pit_id"].as_str().unwrap().to_string();
+
+    let path_index = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({ "pit": { "id": pit_id }, "query": { "match_all": {} } }),
+    )
+    .await;
+    assert_eq!(path_index.status, 400);
+
+    let search_after = call(
+        &state,
+        Method::POST,
+        "/_search",
+        json!({
+            "pit": { "id": pit_id },
+            "search_after": [1],
+            "query": { "match_all": {} }
+        }),
+    )
+    .await;
+    assert_eq!(search_after.status, 501);
+    assert_eq!(
+        search_after.body.unwrap()["error"]["type"],
         "opensearch_lite_unsupported_api_exception"
     );
 }

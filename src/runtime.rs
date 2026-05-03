@@ -291,10 +291,16 @@ impl RuntimeState {
             .collect()
     }
 
-    pub fn pit_database(&self, pit_id: &str) -> Option<Database> {
+    pub fn pit_database(&self, pit_id: &str, keep_alive: Option<Duration>) -> Option<Database> {
         let mut inner = self.inner.lock().expect("runtime lock is not poisoned");
         purge_expired_pits(&mut inner);
-        inner.pits.get(pit_id).map(|pit| pit.database.clone())
+        inner.pits.get_mut(pit_id).map(|pit| {
+            if let Some(keep_alive) = keep_alive {
+                pit.keep_alive = keep_alive;
+                pit.expires_at = Instant::now() + keep_alive;
+            }
+            pit.database.clone()
+        })
     }
 
     pub fn record_completed_task(&self, action: &str, response: Value) -> String {

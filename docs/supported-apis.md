@@ -43,7 +43,7 @@ and `admin` requires `admin`.
 | `search`, `count`, `mget`, `msearch` | implemented | read | In-memory search and read APIs, including read APIs that use `POST`; supports the documented Discover query, saved-object `_find` search fields, and first visualization aggregation subset. |
 | `indices.validate_query`, `indices.analyze`, `explain` | implemented/scaffold | read | Development-scale query validation, simple text analysis, and local evaluator explanation. |
 | `scroll`, `clear_scroll` | implemented | read | In-memory process-local scroll cursors for migration-style batched reads; cursors are not durable across restarts. |
-| `create_pit`, `get_all_pits`, `delete_pit`, `delete_all_pits` | implemented/lifecycle | read | Process-local PIT contexts with bounded retained frozen database views. PIT-backed `_search` remains unsupported until `search_after` and frozen-view search are implemented. |
+| `create_pit`, `get_all_pits`, `delete_pit`, `delete_all_pits` | implemented | read | Process-local PIT contexts with bounded retained frozen database views. `_search` with `pit.id` reads the frozen view and can refresh `pit.keep_alive`; `search_after` remains unsupported. |
 | `reindex`, `tasks.get` | implemented | write/read | Reindex executes synchronously against local data; `wait_for_completion=false` returns a synthetic completed task for polling clients. |
 | `delete_by_query`, `update_by_query` | implemented/narrow | write | Query-matched local mutation. `update_by_query` only supports the saved-object namespace/workspace removal scripts used by Dashboards-style clients. |
 | `snapshot.get_repository`, `snapshot.create_repository`, `snapshot.delete_repository`, `snapshot.verify_repository`, `snapshot.cleanup_repository`, `snapshot.create`, `snapshot.get`, `snapshot.delete` | implemented | admin | Local native repository catalog under `--data-dir/repositories`; snapshot restore, clone, remote repository plugins, and distributed shard semantics remain unsupported. |
@@ -134,7 +134,7 @@ fallback. Unknown `GET` requests may still use fallback when configured, but
 their context is metadata-only; unknown `POST` requests fail closed. Mutating
 APIs outside the deterministic local surface, scripts outside the narrow
 saved-object update subset, unsupported snapshot operations such as restore and
-clone, PIT-backed search until frozen-view search is implemented, pipeline
+clone, `search_after` until cursor pagination is implemented, pipeline
 execution, task cancellation, and other write/control routes are never routed to
 fallback.
 

@@ -2375,12 +2375,24 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
         Ok(body) => body,
         Err(error) => return parse_error(error),
     };
-    if body.get("pit").is_some() {
+    let pit = match pit_search_from_body(&mut body) {
+        Ok(pit) => pit,
+        Err(response) => return response,
+    };
+    if body.get("search_after").is_some() {
         return open_search_error(
             501,
             "opensearch_lite_unsupported_api_exception",
-            "OpenSearch Lite can create, list, and delete PIT contexts, but PIT-backed search is not implemented yet",
-            Some("Use normal search or scroll for now; PIT-backed search is planned with search_after support."),
+            "OpenSearch Lite does not implement search_after yet",
+            Some("Use from/size, scroll, or retry after the search_after tranche lands."),
+        );
+    }
+    if pit.is_some() && path_index.filter(|index| *index != "_search").is_some() {
+        return open_search_error(
+            400,
+            "illegal_argument_exception",
+            "search with a PIT must not include a path index",
+            Some("Use POST /_search with the pit object from the request body."),
         );
     }
     if let Some(source_filter) = source_filter_from_query(&request.query) {
@@ -2389,6 +2401,14 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
     let from = numeric_param(&body, &request.query, "from", 0);
     let size = numeric_param(&body, &request.query, "size", 10);
     let scroll_requested = request.query_value("scroll").is_some() || body.get("scroll").is_some();
+    if pit.is_some() && scroll_requested {
+        return open_search_error(
+            400,
+            "illegal_argument_exception",
+            "search with a PIT cannot also use scroll",
+            Some("Use PIT with from/size for now, or use scroll without a PIT."),
+        );
+    }
     if let Err(error) = search_engine::limits::validate_request(
         &body,
         from,
@@ -2416,31 +2436,57 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
         );
     }
     let indices = path_indices(path_index, "_search");
-    match state
-        .store
-        .read_database(|db| validate_search_indices(db, &indices))
-    {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => return store_error(error),
-        Err(error) => return store_error(error),
-    }
-    let search_result = state.store.read_database(|db| {
+    let search_size = if scroll_requested {
+        scroll_capture_size(state, size)
+    } else {
+        size
+    };
+    let pit_id = pit.as_ref().map(|pit| pit.id.clone());
+    let search_result = if let Some(pit) = pit {
+        let Some(database) = state.runtime.pit_database(&pit.id, pit.keep_alive) else {
+            return missing_pit(&pit.id);
+        };
         search_engine::search(
-            db,
+            &database,
             SearchRequest {
-                indices,
+                indices: Vec::new(),
                 body,
                 from,
-                size: if scroll_requested {
-                    scroll_capture_size(state, size)
-                } else {
-                    size
-                },
+                size: search_size,
             },
         )
-    });
+        .map_err(|reason| StoreError::new(400, "x_content_parse_exception", reason))
+    } else {
+        match state
+            .store
+            .read_database(|db| validate_search_indices(db, &indices))
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return store_error(error),
+            Err(error) => return store_error(error),
+        }
+        state
+            .store
+            .read_database(|db| {
+                search_engine::search(
+                    db,
+                    SearchRequest {
+                        indices,
+                        body,
+                        from,
+                        size: search_size,
+                    },
+                )
+            })
+            .and_then(|result| {
+                result.map_err(|reason| StoreError::new(400, "x_content_parse_exception", reason))
+            })
+    };
     match search_result {
-        Ok(Ok(mut body)) => {
+        Ok(mut body) => {
+            if let Some(pit_id) = pit_id {
+                body["pit_id"] = json!(pit_id);
+            }
             if scroll_requested {
                 body = match scroll_response(state, body, size) {
                     Ok(body) => body,
@@ -2454,12 +2500,6 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
             }
             Response::json(200, body)
         }
-        Ok(Err(error)) => open_search_error(
-            400,
-            "x_content_parse_exception",
-            error,
-            Some("Use match_all, term, terms, range, exists, bool, ids, or simple match queries."),
-        ),
         Err(error) => open_search_error(
             error.status,
             error.error_type,
@@ -2956,6 +2996,16 @@ fn handle_msearch(state: &AppState, request: &Request, path_index: Option<&str>)
             Ok(body) => body,
             Err(error) => return parse_error(format!("msearch body is not valid JSON: {error}")),
         };
+        if body.get("pit").is_some() || body.get("search_after").is_some() {
+            responses.push(json!({
+                "error": {
+                    "type": "opensearch_lite_unsupported_api_exception",
+                    "reason": "msearch with PIT or search_after is not implemented by OpenSearch Lite yet"
+                },
+                "status": 501
+            }));
+            continue;
+        }
         let from = body
             .get("from")
             .and_then(Value::as_u64)
@@ -4281,6 +4331,43 @@ fn keep_alive_from_request(request: &Request) -> Result<Duration, Response> {
     parse_keep_alive(raw).map_err(parse_error)
 }
 
+#[derive(Debug, Clone)]
+struct PitSearchRequest {
+    id: String,
+    keep_alive: Option<Duration>,
+}
+
+fn pit_search_from_body(body: &mut Value) -> Result<Option<PitSearchRequest>, Response> {
+    let Some(pit) = body.get("pit").cloned() else {
+        return Ok(None);
+    };
+    let Some(pit) = pit.as_object() else {
+        return Err(parse_error("search [pit] must be an object".to_string()));
+    };
+    let Some(id) = pit.get("id").and_then(Value::as_str) else {
+        return Err(parse_error("search [pit.id] is required".to_string()));
+    };
+    if id.trim().is_empty() {
+        return Err(parse_error("search [pit.id] must not be empty".to_string()));
+    }
+    let keep_alive = match pit.get("keep_alive") {
+        Some(Value::String(value)) => Some(parse_keep_alive(value).map_err(parse_error)?),
+        Some(_) => {
+            return Err(parse_error(
+                "search [pit.keep_alive] must be a string".to_string(),
+            ))
+        }
+        None => None,
+    };
+    if let Some(object) = body.as_object_mut() {
+        object.remove("pit");
+    }
+    Ok(Some(PitSearchRequest {
+        id: id.to_string(),
+        keep_alive,
+    }))
+}
+
 fn parse_keep_alive(raw: &str) -> Result<Duration, String> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -4309,6 +4396,15 @@ fn parse_keep_alive(raw: &str) -> Result<Duration, String> {
         _ => return Err(format!("unsupported keep_alive unit [{unit}]")),
     };
     Ok(Duration::from_millis(millis))
+}
+
+fn missing_pit(pit_id: &str) -> Response {
+    open_search_error(
+        404,
+        "search_context_missing_exception",
+        format!("No point in time context found for id [{pit_id}]"),
+        Some("Create a new PIT and retry the search before its keep_alive expires."),
+    )
 }
 
 fn pit_snapshot(db: &Database, indices: &[String]) -> StoreResult<(Database, u64)> {

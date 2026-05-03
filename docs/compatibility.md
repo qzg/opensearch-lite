@@ -76,8 +76,8 @@ Security does not make best-effort or fallback routes look implemented.
 - Process-local scroll and clear-scroll cursors for migration-style batched
   saved-object reads
 - Process-local PIT create/list/delete lifecycle APIs with retained frozen
-  database views; `_search` with a `pit` object still fails closed until
-  PIT-backed search and `search_after` are implemented
+  database views; `_search` with `pit.id` reads the frozen view and refreshes
+  `pit.keep_alive` when supplied
 - Native local snapshot repository management: repository create/get/delete,
   verify/cleanup, and snapshot create/get/delete under `--data-dir/repositories`
 - Reindex with synthetic completed task metadata for `tasks.get`
@@ -88,7 +88,8 @@ Mocked local no-op APIs return 200-series OpenSearch-shaped responses because
 the operation has no meaningful single-node effect. Security/control,
 unsupported snapshot restore/clone/status APIs, dangling-index, and destructive
 filesystem-like APIs still fail closed. PIT lifecycle is implemented as a
-read-class search context operation, but PIT-backed search is not yet claimed.
+read-class search context operation. `search_after` cursor pagination is not yet
+claimed and fails closed.
 
 ## Dashboards Compatibility
 

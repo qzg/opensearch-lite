@@ -10,8 +10,8 @@ unauthorized requests, and it is denied for security/control namespaces such as
 task-control APIs. Implemented snapshot repository management routes are
 handled deterministically after admin authorization; unsupported snapshot
 subpaths fail closed. PIT lifecycle routes are deterministic read-class runtime
-operations; PIT-backed search fails closed until frozen-view search is
-implemented. The exact Dashboards account probe
+operations, and `_search` with `pit.id` uses the retained frozen runtime view.
+`search_after` still fails closed until cursor pagination is implemented. The exact Dashboards account probe
 `GET /_plugins/_security/api/account` is a deterministic mocked route and does
 not use fallback. The exact direct-query data-source probe
 `GET /_plugins/_query/_datasources` is also a deterministic mocked route and
