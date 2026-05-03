@@ -2,6 +2,7 @@ use crate::{
     api_spec::{AccessClass, RouteMatch, Tier},
     http::request::Request,
     responses::{open_search_error, Response},
+    rest_path::decode_path_param,
 };
 
 pub fn authorize(request: &Request, route: &RouteMatch) -> Result<(), Response> {
@@ -40,11 +41,13 @@ pub fn authorize(request: &Request, route: &RouteMatch) -> Result<(), Response> 
 }
 
 fn control_like_path(path: &str) -> bool {
-    let segments: Vec<&str> = path
+    let decoded_segments = path
         .trim_matches('/')
         .split('/')
         .filter(|part| !part.is_empty())
-        .collect();
+        .map(decode_path_param)
+        .collect::<Vec<_>>();
+    let segments: Vec<&str> = decoded_segments.iter().map(String::as_str).collect();
     matches!(
         segments.as_slice(),
         ["_plugins", "_security", ..]

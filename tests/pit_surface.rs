@@ -4,6 +4,7 @@ use http::Method;
 use opensearch_lite::{server::AppState, Config};
 use serde_json::{json, Value};
 use support::{call, durable_state, ephemeral_state};
+use tokio::time::{sleep, Duration};
 
 #[tokio::test]
 async fn pit_lifecycle_is_process_local_and_opensearch_shaped() {
@@ -61,6 +62,56 @@ async fn pit_lifecycle_is_process_local_and_opensearch_shaped() {
     .await;
     assert_eq!(empty.status, 200);
     assert_eq!(empty.body.unwrap()["pits"], json!([]));
+}
+
+#[tokio::test]
+async fn expired_pits_are_purged_from_list_search_and_budget() {
+    let state = ephemeral_state();
+    seed_orders(&state).await;
+
+    let create = call(
+        &state,
+        Method::POST,
+        "/orders/_search/point_in_time?keep_alive=1ms",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(create.status, 200);
+    let pit_id = create.body.unwrap()["pit_id"].as_str().unwrap().to_string();
+
+    sleep(Duration::from_millis(10)).await;
+
+    let list = call(
+        &state,
+        Method::GET,
+        "/_search/point_in_time/_all",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(list.status, 200);
+    assert_eq!(list.body.unwrap()["pits"], json!([]));
+
+    let expired_search = call(
+        &state,
+        Method::POST,
+        "/_search",
+        json!({ "pit": { "id": pit_id }, "query": { "match_all": {} } }),
+    )
+    .await;
+    assert_eq!(expired_search.status, 404);
+    assert_eq!(
+        expired_search.body.unwrap()["error"]["type"],
+        "search_context_missing_exception"
+    );
+
+    let recreated = call(
+        &state,
+        Method::POST,
+        "/orders/_search/point_in_time?keep_alive=1m",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(recreated.status, 200);
 }
 
 #[tokio::test]
@@ -225,6 +276,13 @@ async fn pit_search_uses_frozen_view_and_refreshes_keep_alive() {
 async fn pit_search_after_remains_stable_after_live_writes() {
     let state = ephemeral_state();
     seed_orders(&state).await;
+    call(
+        &state,
+        Method::PUT,
+        "/orders/_doc/2",
+        json!({ "status": "paid" }),
+    )
+    .await;
 
     let create = call(
         &state,
@@ -244,19 +302,23 @@ async fn pit_search_after_remains_stable_after_live_writes() {
             "pit": { "id": pit_id },
             "size": 1,
             "query": { "match_all": {} },
-            "sort": [{ "_id": { "order": "asc" } }]
+            "sort": [{ "status": { "order": "asc" } }]
         }),
     )
     .await;
     assert_eq!(first.status, 200);
     let first = first.body.unwrap();
     assert_eq!(first["hits"]["hits"][0]["_id"], "1");
+    assert_eq!(
+        first["hits"]["hits"][0]["sort"],
+        json!(["paid", "orders\u{1f}1"])
+    );
     let after = first["hits"]["hits"][0]["sort"].clone();
 
     call(
         &state,
         Method::PUT,
-        "/orders/_doc/2",
+        "/orders/_doc/3",
         json!({ "status": "pending" }),
     )
     .await;
@@ -269,15 +331,16 @@ async fn pit_search_after_remains_stable_after_live_writes() {
             "pit": { "id": pit_id },
             "size": 10,
             "query": { "match_all": {} },
-            "sort": [{ "_id": { "order": "asc" } }],
+            "sort": [{ "status": { "order": "asc" } }],
             "search_after": after
         }),
     )
     .await;
     assert_eq!(second.status, 200);
     let body = second.body.unwrap();
-    assert_eq!(body["hits"]["total"]["value"], 1);
-    assert_eq!(body["hits"]["hits"], json!([]));
+    assert_eq!(body["hits"]["total"]["value"], 2);
+    assert_eq!(body["hits"]["hits"].as_array().unwrap().len(), 1);
+    assert_eq!(body["hits"]["hits"][0]["_id"], "2");
 }
 
 #[tokio::test]

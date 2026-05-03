@@ -668,3 +668,110 @@ async fn sorted_search_returns_sort_values_and_accepts_search_after() {
     assert_eq!(body["hits"]["hits"].as_array().unwrap().len(), 1);
     assert_eq!(body["hits"]["hits"][0]["_id"], "3");
 }
+
+#[tokio::test]
+async fn search_after_with_duplicate_sort_values_returns_equal_sort_hits() {
+    let state = ephemeral_state();
+    for (id, rank) in [("1", 10), ("2", 10), ("3", 20)] {
+        call(
+            &state,
+            Method::PUT,
+            &format!("/orders/_doc/{id}"),
+            json!({ "rank": rank }),
+        )
+        .await;
+    }
+
+    let first = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({
+            "size": 1,
+            "query": { "match_all": {} },
+            "sort": [{ "rank": { "order": "asc" } }]
+        }),
+    )
+    .await;
+    assert_eq!(first.status, 200);
+    let body = first.body.unwrap();
+    assert_eq!(body["hits"]["hits"][0]["_id"], "1");
+    assert_eq!(
+        body["hits"]["hits"][0]["sort"],
+        json!([10, "orders\u{1f}1"])
+    );
+
+    let second = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({
+            "size": 1,
+            "query": { "match_all": {} },
+            "sort": [{ "rank": { "order": "asc" } }],
+            "search_after": body["hits"]["hits"][0]["sort"].clone()
+        }),
+    )
+    .await;
+    assert_eq!(second.status, 200);
+    let body = second.body.unwrap();
+    assert_eq!(body["hits"]["hits"][0]["_id"], "2");
+    assert_eq!(
+        body["hits"]["hits"][0]["sort"],
+        json!([10, "orders\u{1f}2"])
+    );
+}
+
+#[tokio::test]
+async fn descending_sorted_search_after_returns_next_page() {
+    let state = ephemeral_state();
+    for (id, rank) in [("1", 10), ("2", 20), ("3", 30)] {
+        call(
+            &state,
+            Method::PUT,
+            &format!("/orders/_doc/{id}"),
+            json!({ "rank": rank }),
+        )
+        .await;
+    }
+
+    let first = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({
+            "size": 1,
+            "query": { "match_all": {} },
+            "sort": [
+                { "rank": { "order": "desc" } },
+                { "_id": { "order": "asc" } }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(first.status, 200);
+    let body = first.body.unwrap();
+    assert_eq!(body["hits"]["hits"][0]["_id"], "3");
+    assert_eq!(body["hits"]["hits"][0]["sort"], json!([30, "3"]));
+
+    let second = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({
+            "size": 1,
+            "query": { "match_all": {} },
+            "sort": [
+                { "rank": { "order": "desc" } },
+                { "_id": { "order": "asc" } }
+            ],
+            "search_after": body["hits"]["hits"][0]["sort"].clone()
+        }),
+    )
+    .await;
+    assert_eq!(second.status, 200);
+    let body = second.body.unwrap();
+    assert_eq!(body["hits"]["hits"].as_array().unwrap().len(), 1);
+    assert_eq!(body["hits"]["hits"][0]["_id"], "2");
+    assert_eq!(body["hits"]["hits"][0]["sort"], json!([20, "2"]));
+}

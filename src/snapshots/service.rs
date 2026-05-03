@@ -19,6 +19,7 @@ use crate::{
 pub struct SnapshotService {
     root: Arc<PathBuf>,
     catalog_lock: Arc<Mutex<()>>,
+    ephemeral: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,10 +61,12 @@ impl SnapshotService {
         Self {
             root: Arc::new(config.data_dir.join("repositories")),
             catalog_lock: Arc::new(Mutex::new(())),
+            ephemeral: config.ephemeral,
         }
     }
 
     pub fn put_repository(&self, name: &str, body: Value) -> StoreResult<Value> {
+        self.ensure_persistent()?;
         let name = validate_name(name, "repository")?;
         let repository_type = repository_type(&body)?;
         let settings = body.get("settings").cloned().unwrap_or_else(|| json!({}));
@@ -93,6 +96,7 @@ impl SnapshotService {
     }
 
     pub fn get_repositories(&self, names: Option<&str>) -> StoreResult<Value> {
+        self.ensure_persistent()?;
         let _lock = self.catalog_lock.lock().map_err(|_| lock_error())?;
         let names = match names {
             Some(raw) => expand_names(raw, self.repository_names()?, "repository")?,
@@ -113,6 +117,7 @@ impl SnapshotService {
     }
 
     pub fn delete_repository(&self, names: &str) -> StoreResult<Value> {
+        self.ensure_persistent()?;
         let _lock = self.catalog_lock.lock().map_err(|_| lock_error())?;
         let names = expand_names(names, self.repository_names()?, "repository")?;
         for name in names {
@@ -127,6 +132,7 @@ impl SnapshotService {
     }
 
     pub fn verify_repository(&self, name: &str) -> StoreResult<Value> {
+        self.ensure_persistent()?;
         let name = validate_name(name, "repository")?;
         let _lock = self.catalog_lock.lock().map_err(|_| lock_error())?;
         self.read_latest(&name)?;
@@ -140,6 +146,7 @@ impl SnapshotService {
     }
 
     pub fn cleanup_repository(&self, name: &str) -> StoreResult<Value> {
+        self.ensure_persistent()?;
         let name = validate_name(name, "repository")?;
         let _lock = self.catalog_lock.lock().map_err(|_| lock_error())?;
         let data = self.read_latest(&name)?;
@@ -182,6 +189,7 @@ impl SnapshotService {
         db: &Database,
         body: Value,
     ) -> StoreResult<Value> {
+        self.ensure_persistent()?;
         let repository = validate_name(repository, "repository")?;
         let snapshot = validate_name(snapshot, "snapshot")?;
         let indices = selected_indices(db, &body)?;
@@ -238,6 +246,7 @@ impl SnapshotService {
     }
 
     pub fn get_snapshots(&self, repository: &str, names: &str) -> StoreResult<Value> {
+        self.ensure_persistent()?;
         let repository = validate_name(repository, "repository")?;
         let _lock = self.catalog_lock.lock().map_err(|_| lock_error())?;
         let data = self.read_latest(&repository)?;
@@ -255,6 +264,7 @@ impl SnapshotService {
     }
 
     pub fn delete_snapshot(&self, repository: &str, names: &str) -> StoreResult<Value> {
+        self.ensure_persistent()?;
         let repository = validate_name(repository, "repository")?;
         let _lock = self.catalog_lock.lock().map_err(|_| lock_error())?;
         let mut data = self.read_latest(&repository)?;
@@ -358,6 +368,17 @@ impl SnapshotService {
 
     fn repository_dir(&self, repository: &str) -> PathBuf {
         self.root.join(repository)
+    }
+
+    fn ensure_persistent(&self) -> StoreResult<()> {
+        if self.ephemeral {
+            return Err(StoreError::new(
+                501,
+                "opensearch_lite_unsupported_api_exception",
+                "snapshot repositories are unavailable in --ephemeral mode",
+            ));
+        }
+        Ok(())
     }
 }
 

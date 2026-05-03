@@ -51,7 +51,7 @@ pub struct ScrollPage {
 
 #[derive(Debug, Clone)]
 struct PitContext {
-    database: Database,
+    database: Arc<Database>,
     created_at_unix_millis: u64,
     expires_at: Instant,
     keep_alive: Duration,
@@ -231,7 +231,7 @@ impl RuntimeState {
         inner.pits.insert(
             pit_id.clone(),
             PitContext {
-                database,
+                database: Arc::new(database),
                 created_at_unix_millis: creation_time,
                 expires_at: Instant::now() + keep_alive,
                 keep_alive,
@@ -291,7 +291,11 @@ impl RuntimeState {
             .collect()
     }
 
-    pub fn pit_database(&self, pit_id: &str, keep_alive: Option<Duration>) -> Option<Database> {
+    pub fn pit_database(
+        &self,
+        pit_id: &str,
+        keep_alive: Option<Duration>,
+    ) -> Option<Arc<Database>> {
         let mut inner = self.inner.lock().expect("runtime lock is not poisoned");
         purge_expired_pits(&mut inner);
         inner.pits.get_mut(pit_id).map(|pit| {

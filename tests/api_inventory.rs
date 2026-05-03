@@ -130,6 +130,19 @@ fn snapshot_routes_are_admin_implemented_or_fail_closed() {
 
     for (method, path, api_name) in [
         (Method::GET, "/_snapshot/local/snap-1/extra", "snapshot"),
+        (Method::GET, "/_snapshot/_status", "snapshot.status"),
+        (Method::POST, "/_snapshot/_status", "snapshot.status"),
+        (Method::GET, "/_snapshot/local/_status", "snapshot.status"),
+        (
+            Method::GET,
+            "/_snapshot/local/snap-1/_status",
+            "snapshot.status",
+        ),
+        (
+            Method::GET,
+            "/_snapshot/local/snap-1/orders/_status",
+            "snapshot.status",
+        ),
         (
             Method::POST,
             "/_snapshot/local/snap-1/_restore",
@@ -302,6 +315,23 @@ fn known_malformed_get_shapes_fail_closed_instead_of_agent_fallback() {
     let dangling = classify(&Method::GET, "/_dangling/abc");
     assert_eq!(dangling.tier, Tier::Unsupported);
     assert_eq!(dangling.access, AccessClass::Admin);
+}
+
+#[test]
+fn encoded_control_namespaces_fail_closed_instead_of_agent_fallback() {
+    for path in [
+        "/%5Fsnapshot/local",
+        "/%5Fsnapshot/local/%5Fstatus",
+        "/%5Fplugins/%5Fsecurity/authinfo",
+        "/%5Fopendistro/%5Fsecurity/authinfo",
+        "/%5Fsecurity/user",
+        "/%5Ftasks",
+        "/%5Ftask/opensearch-lite-task%3A1",
+    ] {
+        let route = classify(&Method::GET, path);
+        assert_ne!(route.tier, Tier::AgentRead, "{path}");
+        assert_eq!(route.access, AccessClass::Admin, "{path}");
+    }
 }
 
 #[test]

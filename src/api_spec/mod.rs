@@ -1,6 +1,7 @@
 pub mod generated;
 pub mod tier;
 
+use crate::rest_path::decode_path_param;
 use http::Method;
 
 pub use generated::{inventory, ApiRoute};
@@ -32,11 +33,13 @@ pub struct RouteMatch {
 
 pub fn classify(method: &Method, path: &str) -> RouteMatch {
     let path = path.trim_end_matches('/');
-    let segments: Vec<&str> = path
+    let decoded_segments = path
         .trim_start_matches('/')
         .split('/')
         .filter(|segment| !segment.is_empty())
-        .collect();
+        .map(decode_path_param)
+        .collect::<Vec<_>>();
+    let segments: Vec<&str> = decoded_segments.iter().map(String::as_str).collect();
 
     if path.is_empty() || path == "/" {
         return match *method {
@@ -673,6 +676,10 @@ fn get_only(method: &Method, api_name: &'static str, tier: Tier) -> RouteMatch {
 }
 
 fn classify_snapshot(method: &Method, segments: &[&str]) -> RouteMatch {
+    if segments.iter().skip(1).any(|segment| *segment == "_status") {
+        return route("snapshot.status", Tier::Unsupported, AccessClass::Admin);
+    }
+
     match segments {
         ["_snapshot"] => match *method {
             Method::GET => route(

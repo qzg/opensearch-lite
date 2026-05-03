@@ -226,6 +226,12 @@ fn security_and_control_namespaces_are_not_fallback_eligible() {
         "/_security/user",
         "/_snapshot/repo",
         "/_tasks",
+        "/%5Fplugins/%5Fsecurity/authinfo",
+        "/%5Fopendistro/%5Fsecurity/authinfo",
+        "/%5Fsecurity/user",
+        "/%5Fsnapshot/repo",
+        "/%5Ftasks",
+        "/%5Ftask/opensearch-lite-task%3A1",
     ] {
         let route = classify(&Method::GET, path);
         assert_ne!(route.tier, Tier::AgentRead, "{path}");

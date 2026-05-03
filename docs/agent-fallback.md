@@ -8,11 +8,13 @@ authentication and authorization. It cannot answer unauthenticated or
 unauthorized requests, and it is denied for security/control namespaces such as
 `_plugins/_security`, `_opendistro/_security`, `_security`, snapshots, and
 task-control APIs. Implemented snapshot repository management routes are
-handled deterministically after admin authorization; unsupported snapshot
-subpaths fail closed. PIT lifecycle routes are deterministic read-class runtime
+handled deterministically after admin authorization in durable mode; snapshot
+APIs fail closed under `--ephemeral`, and unsupported snapshot subpaths fail
+closed. PIT lifecycle routes are deterministic read-class runtime
 operations, and `_search` with `pit.id` uses the retained frozen runtime view.
-`search_after` cursor paging is deterministic for `_search`; `_msearch`
-requests with PIT or `search_after` still fail closed instead of reaching
+`search_after` cursor paging is deterministic for `_search`, including
+non-unique sort values; `_msearch` requests with PIT or `search_after` still
+fail closed instead of reaching
 fallback. The exact Dashboards account probe
 `GET /_plugins/_security/api/account` is a deterministic mocked route and does
 not use fallback. The exact direct-query data-source probe

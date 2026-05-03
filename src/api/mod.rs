@@ -2439,7 +2439,7 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
             return missing_pit(&pit.id);
         };
         search_engine::search(
-            &database,
+            database.as_ref(),
             SearchRequest {
                 indices: Vec::new(),
                 body,

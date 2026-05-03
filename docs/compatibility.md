@@ -70,7 +70,8 @@ Security does not make best-effort or fallback routes look implemented.
 - Search/count/msearch with `match_all`, `bool`, `term`, `terms`, `range`,
   `exists`, `ids`, simple `match`, `match_phrase_prefix`,
   `simple_query_string`, limited `nested`, scalar sort values, and `_search`
-  `search_after` cursor paging
+  `search_after` cursor paging with deterministic tie-breakers for non-unique
+  sort values
 - First-tranche visualization aggregations: `terms`, `date_histogram`,
   `histogram`, `range`, `filters`, `missing`, `value_count`, `min`, `max`,
   `avg`, `sum`, `cardinality`, `stats`, and `top_hits`
@@ -82,6 +83,7 @@ Security does not make best-effort or fallback routes look implemented.
   sort values
 - Native local snapshot repository management: repository create/get/delete,
   verify/cleanup, and snapshot create/get/delete under `--data-dir/repositories`
+  in durable mode; snapshot APIs fail closed under `--ephemeral`
 - Reindex with synthetic completed task metadata for `tasks.get`
 - Delete by query and narrow saved-object namespace/workspace update by query
 
@@ -152,7 +154,8 @@ OpenSearch-shaped API snapshots are separate local repository artifacts under
 `--data-dir/repositories/<repository>/`. Repository generations use
 `index.latest` plus readable `index-000001.json`-style manifest files and
 content-addressed database blobs. These files are for local development
-archives; snapshot restore is still unsupported.
+archives; snapshot APIs are disabled in `--ephemeral` mode and snapshot
+restore/status are still unsupported.
 
 PIT contexts are runtime-only and intentionally disappear on process restart.
 They retain bounded in-memory database views and are not written to durable

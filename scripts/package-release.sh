@@ -66,6 +66,12 @@ mkdir -p "$PACKAGE_DIR"
 cp "$BINARY_PATH" "$PACKAGE_DIR/$BIN_NAME$EXE_SUFFIX"
 cp README.md "$PACKAGE_DIR/README.md"
 cp Cargo.toml "$PACKAGE_DIR/Cargo.toml"
+mkdir -p "$PACKAGE_DIR/docs"
+cp docs/supported-apis.md "$PACKAGE_DIR/docs/supported-apis.md"
+cp docs/compatibility.md "$PACKAGE_DIR/docs/compatibility.md"
+cp docs/agent-fallback.md "$PACKAGE_DIR/docs/agent-fallback.md"
+cp docs/security.md "$PACKAGE_DIR/docs/security.md"
+cp docs/kubernetes-security.md "$PACKAGE_DIR/docs/kubernetes-security.md"
 if [ -f LICENSE ]; then
   cp LICENSE "$PACKAGE_DIR/LICENSE"
 fi

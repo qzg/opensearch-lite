@@ -1100,17 +1100,23 @@ fn sort_clauses(sort: Option<&Value>, pit: bool) -> Vec<SortClause> {
         .iter()
         .filter_map(sort_clause)
         .collect::<Vec<_>>();
-    if pit
-        && !clauses
-            .iter()
-            .any(|clause| clause.field.as_str() == "_shard_doc")
-    {
+    if needs_implicit_tiebreaker(&clauses, pit) {
         clauses.push(SortClause {
             field: "_shard_doc".to_string(),
             desc: false,
         });
     }
     clauses
+}
+
+fn needs_implicit_tiebreaker(clauses: &[SortClause], pit: bool) -> bool {
+    if clauses
+        .iter()
+        .any(|clause| clause.field.as_str() == "_shard_doc")
+    {
+        return false;
+    }
+    pit || (!clauses.is_empty() && !clauses.iter().any(|clause| clause.field.as_str() == "_id"))
 }
 
 fn sort_clause(value: &Value) -> Option<SortClause> {

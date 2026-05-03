@@ -1,9 +1,38 @@
 mod support;
 
 use http::Method;
+use opensearch_lite::{server::AppState, Config};
 use serde_json::{json, Value};
 use std::fs;
 use support::{call, durable_state};
+
+#[tokio::test]
+async fn snapshot_apis_fail_closed_in_ephemeral_mode_without_writes() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = Config {
+        data_dir: temp.path().to_path_buf(),
+        ..Config::default()
+    };
+    config.ephemeral = true;
+    let state = AppState::new(config).unwrap();
+
+    let put_repo = call(
+        &state,
+        Method::PUT,
+        "/_snapshot/local",
+        json!({ "type": "fs" }),
+    )
+    .await;
+    assert_eq!(put_repo.status, 501);
+    assert_eq!(
+        put_repo.body.unwrap()["error"]["type"],
+        "opensearch_lite_unsupported_api_exception"
+    );
+
+    let get_repo = call(&state, Method::GET, "/_snapshot", Value::Null).await;
+    assert_eq!(get_repo.status, 501);
+    assert!(!temp.path().join("repositories").exists());
+}
 
 #[tokio::test]
 async fn snapshot_repository_catalog_and_snapshots_are_restart_safe() {
@@ -139,6 +168,103 @@ async fn snapshot_repository_catalog_and_snapshots_are_restart_safe() {
     assert_eq!(delete_repo.status, 200);
     assert_eq!(delete_repo.body.unwrap()["acknowledged"], true);
     assert!(!repo_dir.exists());
+}
+
+#[tokio::test]
+async fn snapshot_cleanup_preserves_blobs_referenced_by_remaining_snapshots() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = durable_state(temp.path());
+
+    assert_eq!(
+        call(&state, Method::PUT, "/orders", json!({})).await.status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/orders/_doc/1",
+            json!({ "status": "paid" }),
+        )
+        .await
+        .status,
+        201
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/_snapshot/local",
+            json!({ "type": "fs" })
+        )
+        .await
+        .status,
+        200
+    );
+    for snapshot in ["snap-1", "snap-2"] {
+        let response = call(
+            &state,
+            Method::PUT,
+            &format!("/_snapshot/local/{snapshot}"),
+            json!({ "indices": "orders" }),
+        )
+        .await;
+        assert_eq!(response.status, 200);
+    }
+
+    let repo_dir = temp.path().join("repositories/local");
+    assert_eq!(
+        fs::read_dir(repo_dir.join("blobs"))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let delete_one = call(
+        &state,
+        Method::DELETE,
+        "/_snapshot/local/snap-1",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(delete_one.status, 200);
+
+    let cleanup = call(
+        &state,
+        Method::POST,
+        "/_snapshot/local/_cleanup",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(cleanup.status, 200);
+    assert_eq!(cleanup.body.unwrap()["results"]["deleted_blobs"], 0);
+
+    let remaining = call(&state, Method::GET, "/_snapshot/local/snap-2", Value::Null).await;
+    assert_eq!(remaining.status, 200);
+    assert_eq!(
+        remaining.body.unwrap()["snapshots"][0]["snapshot"],
+        "snap-2"
+    );
+
+    let delete_remaining = call(
+        &state,
+        Method::DELETE,
+        "/_snapshot/local/snap-2",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(delete_remaining.status, 200);
+    let cleanup = call(
+        &state,
+        Method::POST,
+        "/_snapshot/local/_cleanup",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(cleanup.status, 200);
+    assert_eq!(cleanup.body.unwrap()["results"]["deleted_blobs"], 1);
 }
 
 #[tokio::test]
