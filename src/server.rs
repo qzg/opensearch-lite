@@ -18,6 +18,7 @@ use crate::{
     responses::Response,
     runtime::RuntimeState,
     security::{self, SecurityContext, SecurityState},
+    snapshots::SnapshotService,
     storage::Store,
 };
 
@@ -28,6 +29,7 @@ pub struct AppState {
     pub agent: AgentClient,
     pub security: SecurityState,
     pub runtime: RuntimeState,
+    pub snapshots: SnapshotService,
 }
 
 impl AppState {
@@ -37,12 +39,14 @@ impl AppState {
         let store = Store::open(&config)?;
         let agent = AgentClient::from_config(&config.agent);
         let security = SecurityState::from_config(&config)?;
+        let snapshots = SnapshotService::from_config(&config);
         Ok(Self {
             config: Arc::new(config),
             store,
             agent,
             security,
             runtime: RuntimeState::default(),
+            snapshots,
         })
     }
 
@@ -51,12 +55,14 @@ impl AppState {
         resources::validate(&config)?;
         let store = Store::open(&config)?;
         let security = SecurityState::from_config(&config)?;
+        let snapshots = SnapshotService::from_config(&config);
         Ok(Self {
             config: Arc::new(config),
             store,
             agent,
             security,
             runtime: RuntimeState::default(),
+            snapshots,
         })
     }
 }

@@ -45,6 +45,7 @@ and `admin` requires `admin`.
 | `scroll`, `clear_scroll` | implemented | read | In-memory process-local scroll cursors for migration-style batched reads; cursors are not durable across restarts. |
 | `reindex`, `tasks.get` | implemented | write/read | Reindex executes synchronously against local data; `wait_for_completion=false` returns a synthetic completed task for polling clients. |
 | `delete_by_query`, `update_by_query` | implemented/narrow | write | Query-matched local mutation. `update_by_query` only supports the saved-object namespace/workspace removal scripts used by Dashboards-style clients. |
+| `snapshot.get_repository`, `snapshot.create_repository`, `snapshot.delete_repository`, `snapshot.verify_repository`, `snapshot.cleanup_repository`, `snapshot.create`, `snapshot.get`, `snapshot.delete` | implemented | admin | Local native repository catalog under `--data-dir/repositories`; snapshot restore, clone, remote repository plugins, and distributed shard semantics remain unsupported. |
 
 The first Dashboards-shaped fixture tranches cover data-view metadata,
 Discover-style search, simple visualization aggregations, and saved-object
@@ -131,8 +132,9 @@ Only explicitly read-oriented OpenSearch APIs are eligible for runtime agent
 fallback. Unknown `GET` requests may still use fallback when configured, but
 their context is metadata-only; unknown `POST` requests fail closed. Mutating
 APIs outside the deterministic local surface, scripts outside the narrow
-saved-object update subset, snapshots, pipelines, task cancellation, and other
-write/control routes are never routed to fallback.
+saved-object update subset, unsupported snapshot operations such as restore and
+clone, pipeline execution, task cancellation, and other write/control routes are
+never routed to fallback.
 
 Legacy template writes (`indices.put_template`) are identified as
 `agent_write_fallback_eligible` so the configured fallback model can translate

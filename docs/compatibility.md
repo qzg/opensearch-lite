@@ -45,8 +45,9 @@ permissions, audit-log management, SAML, OIDC, LDAP, and AWS SigV4 are not
 implemented in this tranche. The exact Dashboards account probe
 `GET /_plugins/_security/api/account` returns mocked local principal metadata;
 other requests under `_plugins/_security`, `_opendistro/_security`,
-`_security`, snapshots, and task-control namespaces fail closed instead of
-reaching runtime fallback.
+`_security`, unsupported snapshot subpaths, and task-control namespaces fail
+closed instead of reaching runtime fallback. The implemented snapshot repository
+management subset is admin-only.
 
 Strict compatibility is evaluated after authentication and authorization.
 Security does not make best-effort or fallback routes look implemented.
@@ -74,14 +75,16 @@ Security does not make best-effort or fallback routes look implemented.
   `avg`, `sum`, `cardinality`, `stats`, and `top_hits`
 - Process-local scroll and clear-scroll cursors for migration-style batched
   saved-object reads
+- Native local snapshot repository management: repository create/get/delete,
+  verify/cleanup, and snapshot create/get/delete under `--data-dir/repositories`
 - Reindex with synthetic completed task metadata for `tasks.get`
 - Delete by query and narrow saved-object namespace/workspace update by query
 
 Unsupported mutating APIs are never routed to runtime fallback.
 Mocked local no-op APIs return 200-series OpenSearch-shaped responses because
 the operation has no meaningful single-node effect. Security/control,
-snapshot/restore/delete, dangling-index, and destructive filesystem-like APIs
-still fail closed.
+unsupported snapshot restore/clone/status APIs, dangling-index, and destructive
+filesystem-like APIs still fail closed.
 
 ## Dashboards Compatibility
 
@@ -136,6 +139,12 @@ the metadata file exposes generation, estimated stored bytes, index/document
 counts, registry object count, and log high-water information without parsing
 all document bodies. Snapshots are dirty-threshold based rather than rewritten
 after every write.
+
+OpenSearch-shaped API snapshots are separate local repository artifacts under
+`--data-dir/repositories/<repository>/`. Repository generations use
+`index.latest` plus readable `index-000001.json`-style manifest files and
+content-addressed database blobs. These files are for local development
+archives; snapshot restore is still unsupported.
 
 On startup, durable mode also repairs legacy Dashboards saved-object IDs that
 were previously stored in encoded path form, such as

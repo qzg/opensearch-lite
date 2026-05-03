@@ -61,6 +61,105 @@ fn generated_inventory_matches_manual_dashboards_routes() {
 }
 
 #[test]
+fn snapshot_routes_are_admin_implemented_or_fail_closed() {
+    let inventory = inventory();
+    for name in [
+        "snapshot.get_repository",
+        "snapshot.create_repository",
+        "snapshot.delete_repository",
+        "snapshot.verify_repository",
+        "snapshot.cleanup_repository",
+        "snapshot.create",
+        "snapshot.get",
+        "snapshot.delete",
+    ] {
+        let route = inventory
+            .iter()
+            .find(|route| route.name == name)
+            .unwrap_or_else(|| panic!("missing route inventory entry {name}"));
+        assert_eq!(route.tier, Tier::Implemented, "{name}");
+        assert_eq!(route.access, AccessClass::Admin, "{name}");
+    }
+    for name in ["snapshot.restore", "snapshot.clone", "snapshot.status"] {
+        let route = inventory
+            .iter()
+            .find(|route| route.name == name)
+            .unwrap_or_else(|| panic!("missing route inventory entry {name}"));
+        assert_eq!(route.tier, Tier::Unsupported, "{name}");
+        assert_eq!(route.access, AccessClass::Admin, "{name}");
+    }
+
+    for (method, path, api_name) in [
+        (Method::GET, "/_snapshot", "snapshot.get_repository"),
+        (
+            Method::PUT,
+            "/_snapshot/local",
+            "snapshot.create_repository",
+        ),
+        (
+            Method::POST,
+            "/_snapshot/local",
+            "snapshot.create_repository",
+        ),
+        (Method::GET, "/_snapshot/local", "snapshot.get_repository"),
+        (
+            Method::DELETE,
+            "/_snapshot/local",
+            "snapshot.delete_repository",
+        ),
+        (
+            Method::POST,
+            "/_snapshot/local/_verify",
+            "snapshot.verify_repository",
+        ),
+        (
+            Method::POST,
+            "/_snapshot/local/_cleanup",
+            "snapshot.cleanup_repository",
+        ),
+        (Method::PUT, "/_snapshot/local/snap-1", "snapshot.create"),
+        (Method::POST, "/_snapshot/local/snap-1", "snapshot.create"),
+        (Method::GET, "/_snapshot/local/snap-1", "snapshot.get"),
+        (Method::DELETE, "/_snapshot/local/snap-1", "snapshot.delete"),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Implemented, "{method} {path}");
+        assert_eq!(route.access, AccessClass::Admin, "{method} {path}");
+    }
+
+    for (method, path, api_name) in [
+        (Method::GET, "/_snapshot/local/snap-1/extra", "snapshot"),
+        (
+            Method::POST,
+            "/_snapshot/local/snap-1/_restore",
+            "snapshot.restore",
+        ),
+        (
+            Method::PUT,
+            "/_snapshot/local/snap-1/_clone/other",
+            "snapshot.clone",
+        ),
+        (
+            Method::GET,
+            "/_snapshot/local/_verify",
+            "snapshot.verify_repository",
+        ),
+        (
+            Method::GET,
+            "/_snapshot/local/_cleanup",
+            "snapshot.cleanup_repository",
+        ),
+    ] {
+        let route = classify(&method, path);
+        assert_eq!(route.api_name, api_name, "{method} {path}");
+        assert_eq!(route.tier, Tier::Unsupported, "{method} {path}");
+        assert_eq!(route.access, AccessClass::Admin, "{method} {path}");
+        assert_ne!(route.tier, Tier::AgentRead, "{method} {path}");
+    }
+}
+
+#[test]
 fn vendored_opensearch_36_rest_spec_is_present() {
     let api_dir = std::path::Path::new("vendor/opensearch-rest-api-spec/rest-api-spec/api");
     let count = std::fs::read_dir(api_dir)

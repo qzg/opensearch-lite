@@ -11,6 +11,7 @@ pub mod runtime;
 pub mod search;
 pub mod security;
 pub mod server;
+pub mod snapshots;
 pub mod storage;
 
 pub use config::Config;

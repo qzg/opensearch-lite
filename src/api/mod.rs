@@ -33,6 +33,7 @@ use crate::{
     search::{self as search_engine, dsl::SearchRequest},
     security,
     server::AppState,
+    snapshots::SnapshotService,
     storage::{
         mutation_log::Mutation, Database, Store, StoreError, StoreResult, WriteOperation,
         WriteOutcome,
@@ -99,6 +100,9 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
         } else {
             handle_scroll(&state, &request, parts.last().copied())
         };
+    }
+    if parts.first() == Some(&"_snapshot") {
+        return handle_snapshot(&state, &request, &parts).await;
     }
     if matches!(parts.as_slice(), ["_bulk"] | [_, "_bulk"]) {
         let path_index = match parts.as_slice() {
@@ -539,6 +543,125 @@ fn agent_write_scope(
             }
         }
         _ => Err(unsupported(api_name)),
+    }
+}
+
+async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) -> Response {
+    match (request.method.clone(), parts) {
+        (Method::GET, ["_snapshot"]) => {
+            match run_snapshot(state.snapshots.clone(), |snapshots| {
+                snapshots.get_repositories(None)
+            })
+            .await
+            {
+                Ok(body) => Response::json(200, body),
+                Err(error) => store_error(error),
+            }
+        }
+        (Method::GET, ["_snapshot", repository]) => {
+            let repository = decode_path_param(repository);
+            match run_snapshot(state.snapshots.clone(), move |snapshots| {
+                snapshots.get_repositories(Some(&repository))
+            })
+            .await
+            {
+                Ok(body) => Response::json(200, body),
+                Err(error) => store_error(error),
+            }
+        }
+        (Method::PUT | Method::POST, ["_snapshot", repository]) => {
+            let repository = decode_path_param(repository);
+            let body = match request.body_json() {
+                Ok(body) => body,
+                Err(error) => return parse_error(error),
+            };
+            match run_snapshot(state.snapshots.clone(), move |snapshots| {
+                snapshots.put_repository(&repository, body)
+            })
+            .await
+            {
+                Ok(body) => Response::json(200, body),
+                Err(error) => store_error(error),
+            }
+        }
+        (Method::DELETE, ["_snapshot", repository]) => {
+            let repository = decode_path_param(repository);
+            match run_snapshot(state.snapshots.clone(), move |snapshots| {
+                snapshots.delete_repository(&repository)
+            })
+            .await
+            {
+                Ok(body) => Response::json(200, body),
+                Err(error) => store_error(error),
+            }
+        }
+        (Method::POST, ["_snapshot", repository, "_verify"]) => {
+            let repository = decode_path_param(repository);
+            match run_snapshot(state.snapshots.clone(), move |snapshots| {
+                snapshots.verify_repository(&repository)
+            })
+            .await
+            {
+                Ok(body) => Response::json(200, body),
+                Err(error) => store_error(error),
+            }
+        }
+        (Method::POST, ["_snapshot", repository, "_cleanup"]) => {
+            let repository = decode_path_param(repository);
+            match run_snapshot(state.snapshots.clone(), move |snapshots| {
+                snapshots.cleanup_repository(&repository)
+            })
+            .await
+            {
+                Ok(body) => Response::json(200, body),
+                Err(error) => store_error(error),
+            }
+        }
+        (Method::GET, ["_snapshot", repository, snapshot]) => {
+            let repository = decode_path_param(repository);
+            let snapshot = decode_path_param(snapshot);
+            match run_snapshot(state.snapshots.clone(), move |snapshots| {
+                snapshots.get_snapshots(&repository, &snapshot)
+            })
+            .await
+            {
+                Ok(body) => Response::json(200, body),
+                Err(error) => store_error(error),
+            }
+        }
+        (Method::PUT | Method::POST, ["_snapshot", repository, snapshot]) => {
+            let repository = decode_path_param(repository);
+            let snapshot = decode_path_param(snapshot);
+            let body = match request.body_json() {
+                Ok(body) => body,
+                Err(error) => return parse_error(error),
+            };
+            let db = match state.store.read_database(Clone::clone) {
+                Ok(db) => db,
+                Err(error) => return store_error(error),
+            };
+            match run_snapshot(state.snapshots.clone(), move |snapshots| {
+                snapshots.create_snapshot(&repository, &snapshot, &db, body)
+            })
+            .await
+            {
+                Ok(body) => Response::json(200, body),
+                Err(error) => store_error(error),
+            }
+        }
+        (Method::DELETE, ["_snapshot", repository, snapshot]) => {
+            let repository = decode_path_param(repository);
+            let snapshot = decode_path_param(snapshot);
+            match run_snapshot(state.snapshots.clone(), move |snapshots| {
+                snapshots.delete_snapshot(&repository, &snapshot)
+            })
+            .await
+            {
+                Ok(body) => Response::json(200, body),
+                Err(error) => store_error(error),
+            }
+        }
+        _ => unsupported("snapshot"),
     }
 }
 
@@ -4390,6 +4513,18 @@ where
     T: Send + 'static,
 {
     tokio::task::spawn_blocking(move || f(store))
+        .await
+        .map_err(|error| StoreError::new(500, "task_join_exception", error.to_string()))?
+}
+
+async fn run_snapshot<T>(
+    snapshots: SnapshotService,
+    f: impl FnOnce(SnapshotService) -> StoreResult<T> + Send + 'static,
+) -> StoreResult<T>
+where
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(move || f(snapshots))
         .await
         .map_err(|error| StoreError::new(500, "task_join_exception", error.to_string()))?
 }

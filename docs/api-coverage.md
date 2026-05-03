@@ -8,9 +8,9 @@ Generated from `opensearch_lite::api_spec::inventory()` over the pinned OpenSear
 | --- | ---: | ---: |
 | Route shapes in inventory | 267 | 100.0% |
 | Unique API names | 167 | - |
-| Deterministic local responses | 167 | 62.5% |
-| Runtime fallback eligible | 69 | 25.8% |
-| Closed or outside product identity | 31 | 11.6% |
+| Deterministic local responses | 176 | 65.9% |
+| Runtime fallback eligible | 62 | 23.2% |
+| Closed or outside product identity | 29 | 10.9% |
 
 Deterministic local responses combine `implemented`, `best_effort`, and `mocked` routes. Fallback-eligible routes still require runtime agent configuration and are not deterministic local parity.
 
@@ -19,9 +19,9 @@ Deterministic local responses combine `implemented`, `best_effort`, and `mocked`
 ```mermaid
 flowchart LR
   all["OpenSearch route shapes\n267"]
-  deterministic["Deterministic local\n167 (62.5%)"]
-  fallback["Fallback eligible\n69 (25.8%)"]
-  closed["Closed / unsupported\n31 (11.6%)"]
+  deterministic["Deterministic local\n176 (65.9%)"]
+  fallback["Fallback eligible\n62 (23.2%)"]
+  closed["Closed / unsupported\n29 (10.9%)"]
   all --> deterministic
   all --> fallback
   all --> closed
@@ -31,22 +31,22 @@ flowchart LR
 
 ```mermaid
 pie showData
-  "Implemented" : 100
+  "Implemented" : 109
   "Best effort" : 44
   "Mocked" : 23
-  "Agent read fallback" : 68
+  "Agent read fallback" : 61
   "Agent write fallback" : 1
-  "Unsupported" : 31
+  "Unsupported" : 29
 ```
 
 | Tier | Count | Share |
 | --- | ---: | ---: |
-| Implemented | 100 | 37.5% |
+| Implemented | 109 | 40.8% |
 | Best effort | 44 | 16.5% |
 | Mocked | 23 | 8.6% |
-| Agent read fallback | 68 | 25.5% |
+| Agent read fallback | 61 | 22.8% |
 | Agent write fallback | 1 | 0.4% |
-| Unsupported | 31 | 11.6% |
+| Unsupported | 29 | 10.9% |
 
 ## Access Mix
 
@@ -68,9 +68,9 @@ pie showData
 ```mermaid
 xychart-beta
   title "Top Families by Deterministic Route Shapes"
-  x-axis ["indices", "cat", "cluster", "search", "nodes", "documents", "by_query", "ingest", "scripts", "search_pipeline"]
+  x-axis ["indices", "cat", "cluster", "search", "nodes", "snapshot", "documents", "by_query", "ingest", "scripts"]
   y-axis "Routes" 0 --> 57
-  bar [57, 34, 19, 12, 10, 8, 6, 4, 4, 4]
+  bar [57, 34, 19, 12, 10, 9, 8, 6, 4, 4]
 ```
 
 | Family | Total | Deterministic | Fallback eligible | Closed | Implemented | Best effort | Mocked |
@@ -80,6 +80,7 @@ xychart-beta
 | `cluster` | 26 | 19 | 7 | 0 | 7 | 3 | 9 |
 | `search` | 13 | 12 | 1 | 0 | 12 | 0 | 0 |
 | `nodes` | 24 | 10 | 12 | 2 | 0 | 10 | 0 |
+| `snapshot` | 15 | 9 | 0 | 6 | 9 | 0 | 0 |
 | `documents` | 9 | 8 | 1 | 0 | 8 | 0 | 0 |
 | `by_query` | 6 | 6 | 0 | 0 | 3 | 0 | 3 |
 | `ingest` | 7 | 4 | 3 | 0 | 4 | 0 | 0 |
@@ -91,7 +92,6 @@ xychart-beta
 | `tasks` | 4 | 1 | 1 | 2 | 1 | 0 | 0 |
 | `query` | 1 | 1 | 0 | 0 | 0 | 0 | 1 |
 | `security` | 1 | 1 | 0 | 0 | 0 | 0 | 1 |
-| `snapshot` | 15 | 0 | 7 | 8 | 0 | 0 | 0 |
 | `dangling_indices` | 3 | 0 | 1 | 2 | 0 | 0 | 0 |
 | `remote_store` | 3 | 0 | 2 | 1 | 0 | 0 | 0 |
 | `msearch_template` | 2 | 0 | 2 | 0 | 0 | 0 | 0 |

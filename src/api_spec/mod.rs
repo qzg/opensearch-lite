@@ -54,6 +54,9 @@ pub fn classify(method: &Method, path: &str) -> RouteMatch {
             _ => route("tasks.get", Tier::Unsupported, AccessClass::Admin),
         };
     }
+    if segments.first() == Some(&"_snapshot") {
+        return classify_snapshot(method, &segments);
+    }
     if segments.as_slice() == ["_plugins", "_security", "api", "account"] {
         return match *method {
             Method::GET => route("security.account", Tier::Mocked, AccessClass::Read),
@@ -663,6 +666,84 @@ fn get_only(method: &Method, api_name: &'static str, tier: Tier) -> RouteMatch {
     match *method {
         Method::GET | Method::HEAD => route(api_name, tier, AccessClass::Read),
         _ => unsupported_method(api_name, method),
+    }
+}
+
+fn classify_snapshot(method: &Method, segments: &[&str]) -> RouteMatch {
+    match segments {
+        ["_snapshot"] => match *method {
+            Method::GET => route(
+                "snapshot.get_repository",
+                Tier::Implemented,
+                AccessClass::Admin,
+            ),
+            _ => route(
+                "snapshot.get_repository",
+                Tier::Unsupported,
+                AccessClass::Admin,
+            ),
+        },
+        ["_snapshot", _] => match *method {
+            Method::GET => route(
+                "snapshot.get_repository",
+                Tier::Implemented,
+                AccessClass::Admin,
+            ),
+            Method::PUT | Method::POST => route(
+                "snapshot.create_repository",
+                Tier::Implemented,
+                AccessClass::Admin,
+            ),
+            Method::DELETE => route(
+                "snapshot.delete_repository",
+                Tier::Implemented,
+                AccessClass::Admin,
+            ),
+            _ => route(
+                "snapshot.get_repository",
+                Tier::Unsupported,
+                AccessClass::Admin,
+            ),
+        },
+        ["_snapshot", _, "_verify"] => match *method {
+            Method::POST => route(
+                "snapshot.verify_repository",
+                Tier::Implemented,
+                AccessClass::Admin,
+            ),
+            _ => route(
+                "snapshot.verify_repository",
+                Tier::Unsupported,
+                AccessClass::Admin,
+            ),
+        },
+        ["_snapshot", _, "_cleanup"] => match *method {
+            Method::POST => route(
+                "snapshot.cleanup_repository",
+                Tier::Implemented,
+                AccessClass::Admin,
+            ),
+            _ => route(
+                "snapshot.cleanup_repository",
+                Tier::Unsupported,
+                AccessClass::Admin,
+            ),
+        },
+        ["_snapshot", _, _, "_restore"] => {
+            route("snapshot.restore", Tier::Unsupported, AccessClass::Admin)
+        }
+        ["_snapshot", _, _, "_clone", ..] => {
+            route("snapshot.clone", Tier::Unsupported, AccessClass::Admin)
+        }
+        ["_snapshot", _, _] => match *method {
+            Method::GET => route("snapshot.get", Tier::Implemented, AccessClass::Admin),
+            Method::PUT | Method::POST => {
+                route("snapshot.create", Tier::Implemented, AccessClass::Admin)
+            }
+            Method::DELETE => route("snapshot.delete", Tier::Implemented, AccessClass::Admin),
+            _ => route("snapshot.get", Tier::Unsupported, AccessClass::Admin),
+        },
+        _ => route("snapshot", Tier::Unsupported, AccessClass::Admin),
     }
 }
 

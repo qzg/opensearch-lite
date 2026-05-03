@@ -257,6 +257,14 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
             | "search_pipeline.put"
             | "search_pipeline.get"
             | "search_pipeline.delete"
+            | "snapshot.cleanup_repository"
+            | "snapshot.create"
+            | "snapshot.create_repository"
+            | "snapshot.delete"
+            | "snapshot.delete_repository"
+            | "snapshot.get"
+            | "snapshot.get_repository"
+            | "snapshot.verify_repository"
             | "put_script"
             | "get_script"
             | "delete_script"
@@ -276,6 +284,9 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
     }
     if is_mocked_api(name) {
         return "Tier::Mocked";
+    }
+    if name.starts_with("snapshot.") {
+        return "Tier::Unsupported";
     }
     if is_write_fallback_api(name) {
         return "Tier::AgentWrite";
