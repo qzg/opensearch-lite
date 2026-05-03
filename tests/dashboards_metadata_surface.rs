@@ -151,10 +151,9 @@ async fn dashboards_data_view_metadata_is_deterministic() {
     )
     .await;
     assert_eq!(resolved_all.status, 200);
-    assert_eq!(
-        resolved_all.body.unwrap()["indices"][0]["name"],
-        ".opensearch_dashboards"
-    );
+    let body = resolved_all.body.unwrap();
+    assert_eq!(body["indices"][0]["name"], ".opensearch_dashboards");
+    assert_eq!(body["indices"][0]["attributes"], json!(["open", "hidden"]));
 
     let get_caps = call(
         &state,

@@ -29,6 +29,38 @@ fn route_inventory_has_required_core_entries() {
 }
 
 #[test]
+fn generated_inventory_matches_manual_dashboards_routes() {
+    let inventory = inventory();
+
+    let resolve_index = inventory
+        .iter()
+        .find(|route| route.name == "indices.resolve_index")
+        .expect("missing indices.resolve_index inventory route");
+    assert_eq!(resolve_index.tier, Tier::Implemented);
+    assert_eq!(resolve_index.access, AccessClass::Read);
+    assert_eq!(resolve_index.methods, &["GET"]);
+    assert_eq!(resolve_index.paths, &["/_resolve/index/{name}"]);
+
+    let security_account = inventory
+        .iter()
+        .find(|route| route.name == "security.account")
+        .expect("missing security.account inventory route");
+    assert_eq!(security_account.tier, Tier::Mocked);
+    assert_eq!(security_account.access, AccessClass::Read);
+    assert_eq!(security_account.methods, &["GET"]);
+    assert_eq!(security_account.paths, &["/_plugins/_security/api/account"]);
+
+    let query_datasources = inventory
+        .iter()
+        .find(|route| route.name == "query.datasources")
+        .expect("missing query.datasources inventory route");
+    assert_eq!(query_datasources.tier, Tier::Mocked);
+    assert_eq!(query_datasources.access, AccessClass::Read);
+    assert_eq!(query_datasources.methods, &["GET"]);
+    assert_eq!(query_datasources.paths, &["/_plugins/_query/_datasources"]);
+}
+
+#[test]
 fn vendored_opensearch_36_rest_spec_is_present() {
     let api_dir = std::path::Path::new("vendor/opensearch-rest-api-spec/rest-api-spec/api");
     let count = std::fs::read_dir(api_dir)

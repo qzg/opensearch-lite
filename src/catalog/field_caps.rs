@@ -121,16 +121,18 @@ fn resolve_indices(db: &Database, request: &FieldCapsRequest) -> StoreResult<Vec
             names.append(&mut matches);
             continue;
         }
-        match db.resolve_index(&requested_name) {
-            Some(name) => names.push(name),
-            None if request.ignore_unavailable => {}
-            None => {
-                return Err(StoreError::new(
-                    404,
-                    "index_not_found_exception",
-                    format!("no such index [{requested_name}]"),
-                ));
+        let resolved = db.resolve_indices(&requested_name);
+        if resolved.is_empty() {
+            if request.ignore_unavailable {
+                continue;
             }
+            return Err(StoreError::new(
+                404,
+                "index_not_found_exception",
+                format!("no such index [{requested_name}]"),
+            ));
+        } else {
+            names.extend(resolved);
         }
     }
     names.sort();

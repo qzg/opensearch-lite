@@ -3332,7 +3332,7 @@ fn resolve_index_response(db: &Database, request: &Request, name: &str) -> Value
             json!({
                 "name": index.name.clone(),
                 "aliases": index.aliases.iter().cloned().collect::<Vec<_>>(),
-                "attributes": ["open"]
+                "attributes": resolve_index_attributes(&index.name)
             })
         })
         .collect::<Vec<_>>();
@@ -3355,6 +3355,14 @@ fn resolve_index_response(db: &Database, request: &Request, name: &str) -> Value
 
 fn resolve_visible_index(index_name: &str, include_hidden: bool) -> bool {
     include_hidden || !index_name.starts_with('.')
+}
+
+fn resolve_index_attributes(index_name: &str) -> Vec<&'static str> {
+    let mut attributes = vec!["open"];
+    if index_name.starts_with('.') {
+        attributes.push("hidden");
+    }
+    attributes
 }
 
 fn collect_matching_alias_targets(
@@ -3717,14 +3725,15 @@ fn resolve_index_patterns(db: &Database, requested: &[String]) -> StoreResult<Ve
             );
             continue;
         }
-        let Some(name) = db.resolve_index(requested) else {
+        let resolved = db.resolve_indices(requested);
+        if resolved.is_empty() {
             return Err(StoreError::new(
                 404,
                 "index_not_found_exception",
                 format!("no such index [{requested}]"),
             ));
-        };
-        names.push(name);
+        }
+        names.extend(resolved);
     }
     names.sort();
     names.dedup();
@@ -4147,7 +4156,7 @@ fn validate_search_indices(db: &Database, indices: &[String]) -> StoreResult<()>
         if index == "_all" || index == "*" || index.contains('*') {
             continue;
         }
-        if db.resolve_index(index).is_none() {
+        if db.resolve_indices(index).is_empty() {
             return Err(StoreError::new(
                 404,
                 "index_not_found_exception",

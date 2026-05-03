@@ -2,6 +2,7 @@ mod support;
 
 use http::Method;
 use serde_json::json;
+use std::collections::BTreeSet;
 use support::{call, ephemeral_state, ndjson_call};
 
 #[tokio::test]
@@ -32,6 +33,93 @@ async fn count_returns_search_count_shape() {
 
     assert_eq!(response.status, 200);
     assert_eq!(response.body.unwrap()["count"], 1);
+}
+
+#[tokio::test]
+async fn multi_index_alias_reads_expand_to_all_targets() {
+    let state = ephemeral_state();
+    call(
+        &state,
+        Method::PUT,
+        "/orders/_doc/1",
+        json!({ "status": "paid" }),
+    )
+    .await;
+    call(
+        &state,
+        Method::PUT,
+        "/orders-shadow/_doc/2",
+        json!({ "status": "pending" }),
+    )
+    .await;
+    let alias = call(
+        &state,
+        Method::POST,
+        "/_aliases",
+        json!({
+            "actions": [
+                { "add": { "indices": ["orders", "orders-shadow"], "alias": "orders-read" } }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(alias.status, 200);
+
+    let resolved = call(
+        &state,
+        Method::GET,
+        "/_resolve/index/orders-read",
+        serde_json::Value::Null,
+    )
+    .await;
+    assert_eq!(resolved.status, 200);
+    assert_eq!(
+        resolved.body.unwrap()["aliases"][0]["indices"],
+        json!(["orders", "orders-shadow"])
+    );
+
+    let caps = call(
+        &state,
+        Method::GET,
+        "/orders-read/_field_caps?fields=status",
+        serde_json::Value::Null,
+    )
+    .await;
+    assert_eq!(caps.status, 200);
+    let body = caps.body.unwrap();
+    assert_eq!(body["indices"], json!(["orders", "orders-shadow"]));
+    assert_eq!(
+        body["fields"]["status"]["keyword"]["indices"],
+        json!(["orders", "orders-shadow"])
+    );
+
+    let search = call(
+        &state,
+        Method::POST,
+        "/orders-read/_search",
+        json!({ "query": { "match_all": {} }, "size": 10 }),
+    )
+    .await;
+    assert_eq!(search.status, 200);
+    let body = search.body.unwrap();
+    assert_eq!(body["hits"]["total"]["value"], 2);
+    let hit_indices = body["hits"]["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|hit| hit["_index"].as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(hit_indices, BTreeSet::from(["orders", "orders-shadow"]));
+
+    let count = call(
+        &state,
+        Method::POST,
+        "/orders-read/_count",
+        json!({ "query": { "match_all": {} } }),
+    )
+    .await;
+    assert_eq!(count.status, 200);
+    assert_eq!(count.body.unwrap()["count"], 2);
 }
 
 #[tokio::test]

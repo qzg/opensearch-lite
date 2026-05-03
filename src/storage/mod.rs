@@ -1456,6 +1456,27 @@ impl Database {
             .map(|alias| alias.index.clone())
     }
 
+    pub fn resolve_indices(&self, index_or_alias: &str) -> Vec<String> {
+        if self.indexes.contains_key(index_or_alias) {
+            return vec![index_or_alias.to_string()];
+        }
+
+        let mut names = self
+            .indexes
+            .values()
+            .filter(|index| index.aliases.contains(index_or_alias))
+            .map(|index| index.name.clone())
+            .collect::<Vec<_>>();
+        if names.is_empty() {
+            if let Some(alias) = self.aliases.get(index_or_alias) {
+                names.push(alias.index.clone());
+            }
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
     pub fn document_count(&self) -> usize {
         self.indexes
             .values()

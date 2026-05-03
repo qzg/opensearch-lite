@@ -100,10 +100,22 @@ fn expand_indices(db: &Database, requested: &[String]) -> Vec<String> {
     {
         return db.indexes.keys().cloned().collect();
     }
-    requested
-        .iter()
-        .filter_map(|name| db.resolve_index(name))
-        .collect()
+    let mut names = Vec::new();
+    for requested in requested {
+        if requested.contains('*') {
+            names.extend(
+                db.indexes
+                    .keys()
+                    .filter(|name| wildcard_matches(requested, name))
+                    .cloned(),
+            );
+        } else {
+            names.extend(db.resolve_indices(requested));
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn matches_query(doc: &StoredDocument, query: &Value) -> Result<bool, String> {

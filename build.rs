@@ -29,7 +29,12 @@ fn main() {
         }
         routes.extend(routes_for_file(&path));
     }
-    routes.sort_by(|left, right| left.name.cmp(&right.name));
+    routes.extend(manual_routes());
+    routes.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.paths.cmp(&right.paths))
+    });
 
     let mut generated = String::from(
         "use super::{AccessClass, Tier};\n\n\
@@ -107,6 +112,25 @@ fn routes_for_file(path: &Path) -> Vec<Route> {
     routes
 }
 
+fn manual_routes() -> Vec<Route> {
+    vec![
+        Route {
+            name: "query.datasources".to_string(),
+            tier: "Tier::Mocked",
+            access: "AccessClass::Read",
+            methods: vec!["GET".to_string()],
+            paths: vec!["/_plugins/_query/_datasources".to_string()],
+        },
+        Route {
+            name: "security.account".to_string(),
+            tier: "Tier::Mocked",
+            access: "AccessClass::Read",
+            methods: vec!["GET".to_string()],
+            paths: vec!["/_plugins/_security/api/account".to_string()],
+        },
+    ]
+}
+
 fn access_for(name: &str, methods: &[String]) -> &'static str {
     if is_admin_api(name) {
         return "AccessClass::Admin";
@@ -159,6 +183,7 @@ fn is_read_api(name: &str) -> bool {
             | "indices.get_settings"
             | "indices.analyze"
             | "indices.validate_query"
+            | "indices.resolve_index"
             | "indices.stats"
             | "indices.exists_index_template"
             | "indices.get_index_template"
@@ -209,6 +234,7 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
             | "indices.validate_query"
             | "indices.stats"
             | "indices.refresh"
+            | "indices.resolve_index"
             | "indices.delete_template"
             | "indices.get_template"
             | "indices.exists_template"
