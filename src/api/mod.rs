@@ -2379,14 +2379,6 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
         Ok(pit) => pit,
         Err(response) => return response,
     };
-    if body.get("search_after").is_some() {
-        return open_search_error(
-            501,
-            "opensearch_lite_unsupported_api_exception",
-            "OpenSearch Lite does not implement search_after yet",
-            Some("Use from/size, scroll, or retry after the search_after tranche lands."),
-        );
-    }
     if pit.is_some() && path_index.filter(|index| *index != "_search").is_some() {
         return open_search_error(
             400,
@@ -2453,6 +2445,7 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
                 body,
                 from,
                 size: search_size,
+                pit: true,
             },
         )
         .map_err(|reason| StoreError::new(400, "x_content_parse_exception", reason))
@@ -2475,6 +2468,7 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
                         body,
                         from,
                         size: search_size,
+                        pit: false,
                     },
                 )
             })
@@ -2669,6 +2663,7 @@ fn handle_count(state: &AppState, request: &Request, path_index: Option<&str>) -
                 body,
                 from: 0,
                 size: 0,
+                pit: false,
             },
         )
     });
@@ -3042,6 +3037,7 @@ fn handle_msearch(state: &AppState, request: &Request, path_index: Option<&str>)
                         body,
                         from,
                         size,
+                        pit: false,
                     },
                 )
                 .map_err(|reason| StoreError::new(400, "x_content_parse_exception", reason))

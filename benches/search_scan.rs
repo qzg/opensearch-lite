@@ -109,6 +109,7 @@ fn run_search(db: &Database, body: Value) {
             body,
             from: 0,
             size: 10,
+            pit: false,
         },
     )
     .expect("benchmark query is supported");

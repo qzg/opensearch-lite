@@ -12,6 +12,7 @@ pub struct SearchRequest {
     pub body: Value,
     pub from: usize,
     pub size: usize,
+    pub pit: bool,
 }
 
 pub fn search(db: &Database, request: SearchRequest) -> Result<Value, String> {
@@ -22,7 +23,9 @@ pub fn search(db: &Database, request: SearchRequest) -> Result<Value, String> {
         .unwrap_or_else(|| json!({"match_all": {}}));
     let mut total = 0usize;
     let mut hits = Vec::new();
-    let sorted = request.body.get("sort").is_some();
+    let sort_clauses = sort_clauses(request.body.get("sort"), request.pit);
+    let sorted = !sort_clauses.is_empty();
+    let search_after = search_after_values(&request.body, &sort_clauses)?;
     let aggregations = request
         .body
         .get("aggregations")
@@ -47,10 +50,11 @@ pub fn search(db: &Database, request: SearchRequest) -> Result<Value, String> {
         }
     }
 
-    apply_sort(&mut hits, request.body.get("sort"));
+    sort_by_clauses(&mut hits, &sort_clauses);
     let offset = if needs_all_hits { request.from } else { 0 };
     let paged = hits
         .iter()
+        .filter(|hit| hit_is_after_search_after(hit, &sort_clauses, search_after.as_deref()))
         .skip(offset)
         .take(request.size)
         .map(|hit| {
@@ -64,6 +68,9 @@ pub fn search(db: &Database, request: SearchRequest) -> Result<Value, String> {
             });
             if request.body.get("_source") != Some(&Value::Bool(false)) {
                 response["_source"] = filter_source(&hit.doc.source, request.body.get("_source"));
+            }
+            if sorted {
+                response["sort"] = Value::Array(sort_values(hit, &sort_clauses));
             }
             response
         })
@@ -1072,38 +1079,174 @@ fn aggregation_key(value: &Value) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SortClause {
+    field: String,
+    desc: bool,
+}
+
 fn apply_sort(hits: &mut [MatchedDocument<'_>], sort: Option<&Value>) {
-    let Some(sort) = sort else {
-        return;
-    };
-    let clauses = match sort {
-        Value::Array(values) => values.as_slice(),
-        value => std::slice::from_ref(value),
-    };
-    let Some(first) = clauses.first() else {
-        return;
-    };
-    let (field, desc) = match first {
-        Value::String(field) => (field.as_str(), false),
+    let clauses = sort_clauses(sort, false);
+    sort_by_clauses(hits, &clauses);
+}
+
+fn sort_clauses(sort: Option<&Value>, pit: bool) -> Vec<SortClause> {
+    let mut clauses = sort
+        .map(|sort| match sort {
+            Value::Array(values) => values.as_slice(),
+            value => std::slice::from_ref(value),
+        })
+        .unwrap_or_default()
+        .iter()
+        .filter_map(sort_clause)
+        .collect::<Vec<_>>();
+    if pit
+        && !clauses
+            .iter()
+            .any(|clause| clause.field.as_str() == "_shard_doc")
+    {
+        clauses.push(SortClause {
+            field: "_shard_doc".to_string(),
+            desc: false,
+        });
+    }
+    clauses
+}
+
+fn sort_clause(value: &Value) -> Option<SortClause> {
+    match value {
+        Value::String(field) => Some(SortClause {
+            field: field.clone(),
+            desc: field == "_score",
+        }),
         Value::Object(object) => {
-            let Some((field, config)) = object.iter().next() else {
-                return;
-            };
-            let order = config.get("order").and_then(Value::as_str).unwrap_or("asc");
-            (field.as_str(), order == "desc")
+            let (field, config) = object.iter().next()?;
+            let default_order = if field == "_score" { "desc" } else { "asc" };
+            let order = config
+                .get("order")
+                .and_then(Value::as_str)
+                .unwrap_or(default_order);
+            Some(SortClause {
+                field: field.clone(),
+                desc: order == "desc",
+            })
         }
-        _ => return,
-    };
-    hits.sort_by(|left, right| {
-        let left = value_at(&left.doc.source, field).and_then(scalar_for_compare);
-        let right = value_at(&right.doc.source, field).and_then(scalar_for_compare);
-        let ordering = left.cmp(&right);
-        if desc {
+        _ => None,
+    }
+}
+
+fn sort_by_clauses(hits: &mut [MatchedDocument<'_>], clauses: &[SortClause]) {
+    if clauses.is_empty() {
+        return;
+    }
+    hits.sort_by(|left, right| compare_hits(left, right, clauses));
+}
+
+fn compare_hits(
+    left: &MatchedDocument<'_>,
+    right: &MatchedDocument<'_>,
+    clauses: &[SortClause],
+) -> Ordering {
+    for clause in clauses {
+        let ordering = compare_sort_values(&sort_value(left, clause), &sort_value(right, clause));
+        let ordering = if clause.desc {
             ordering.reverse()
         } else {
             ordering
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
         }
-    });
+    }
+    Ordering::Equal
+}
+
+fn search_after_values(body: &Value, clauses: &[SortClause]) -> Result<Option<Vec<Value>>, String> {
+    let Some(search_after) = body.get("search_after") else {
+        return Ok(None);
+    };
+    if clauses.is_empty() {
+        return Err("search_after requires a sort clause".to_string());
+    }
+    let Some(values) = search_after.as_array() else {
+        return Err("search_after must be an array".to_string());
+    };
+    if values.len() != clauses.len() {
+        return Err(format!(
+            "search_after has {} values but sort has {} clauses",
+            values.len(),
+            clauses.len()
+        ));
+    }
+    Ok(Some(values.clone()))
+}
+
+fn hit_is_after_search_after(
+    hit: &MatchedDocument<'_>,
+    clauses: &[SortClause],
+    search_after: Option<&[Value]>,
+) -> bool {
+    let Some(search_after) = search_after else {
+        return true;
+    };
+    for (clause, after_value) in clauses.iter().zip(search_after.iter()) {
+        let ordering = compare_sort_values(&sort_value(hit, clause), after_value);
+        let ordering = if clause.desc {
+            ordering.reverse()
+        } else {
+            ordering
+        };
+        if ordering == Ordering::Greater {
+            return true;
+        }
+        if ordering == Ordering::Less {
+            return false;
+        }
+    }
+    false
+}
+
+fn sort_values(hit: &MatchedDocument<'_>, clauses: &[SortClause]) -> Vec<Value> {
+    clauses
+        .iter()
+        .map(|clause| sort_value(hit, clause))
+        .collect()
+}
+
+fn sort_value(hit: &MatchedDocument<'_>, clause: &SortClause) -> Value {
+    match clause.field.as_str() {
+        "_id" => Value::String(hit.doc.id.clone()),
+        "_score" => json!(hit.score),
+        "_shard_doc" => Value::String(format!("{}\u{1f}{}", hit.index, hit.doc.id)),
+        field => value_at(&hit.doc.source, field)
+            .cloned()
+            .unwrap_or(Value::Null),
+    }
+}
+
+fn compare_sort_values(left: &Value, right: &Value) -> Ordering {
+    match (left, right) {
+        (Value::Null, Value::Null) => Ordering::Equal,
+        (Value::Null, _) => Ordering::Less,
+        (_, Value::Null) => Ordering::Greater,
+        (Value::Number(left), Value::Number(right)) => left
+            .as_f64()
+            .partial_cmp(&right.as_f64())
+            .unwrap_or(Ordering::Equal),
+        (Value::String(left), Value::String(right)) => left.cmp(right),
+        (Value::Bool(left), Value::Bool(right)) => left.cmp(right),
+        _ => sort_value_key(left).cmp(&sort_value_key(right)),
+    }
+}
+
+fn sort_value_key(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Null => String::new(),
+        value => value.to_string(),
+    }
 }
 
 pub(crate) fn filter_source(source: &Value, source_filter: Option<&Value>) -> Value {

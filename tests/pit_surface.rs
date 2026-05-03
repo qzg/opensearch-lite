@@ -222,7 +222,66 @@ async fn pit_search_uses_frozen_view_and_refreshes_keep_alive() {
 }
 
 #[tokio::test]
-async fn pit_search_rejects_missing_conflicting_and_not_yet_supported_shapes() {
+async fn pit_search_after_remains_stable_after_live_writes() {
+    let state = ephemeral_state();
+    seed_orders(&state).await;
+
+    let create = call(
+        &state,
+        Method::POST,
+        "/orders/_search/point_in_time?keep_alive=1m",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(create.status, 200);
+    let pit_id = create.body.unwrap()["pit_id"].as_str().unwrap().to_string();
+
+    let first = call(
+        &state,
+        Method::POST,
+        "/_search",
+        json!({
+            "pit": { "id": pit_id },
+            "size": 1,
+            "query": { "match_all": {} },
+            "sort": [{ "_id": { "order": "asc" } }]
+        }),
+    )
+    .await;
+    assert_eq!(first.status, 200);
+    let first = first.body.unwrap();
+    assert_eq!(first["hits"]["hits"][0]["_id"], "1");
+    let after = first["hits"]["hits"][0]["sort"].clone();
+
+    call(
+        &state,
+        Method::PUT,
+        "/orders/_doc/2",
+        json!({ "status": "pending" }),
+    )
+    .await;
+
+    let second = call(
+        &state,
+        Method::POST,
+        "/_search",
+        json!({
+            "pit": { "id": pit_id },
+            "size": 10,
+            "query": { "match_all": {} },
+            "sort": [{ "_id": { "order": "asc" } }],
+            "search_after": after
+        }),
+    )
+    .await;
+    assert_eq!(second.status, 200);
+    let body = second.body.unwrap();
+    assert_eq!(body["hits"]["total"]["value"], 1);
+    assert_eq!(body["hits"]["hits"], json!([]));
+}
+
+#[tokio::test]
+async fn pit_search_rejects_missing_conflicting_and_malformed_cursor_shapes() {
     let state = ephemeral_state();
     seed_orders(&state).await;
 
@@ -258,21 +317,22 @@ async fn pit_search_rejects_missing_conflicting_and_not_yet_supported_shapes() {
     .await;
     assert_eq!(path_index.status, 400);
 
-    let search_after = call(
+    let malformed_search_after = call(
         &state,
         Method::POST,
         "/_search",
         json!({
             "pit": { "id": pit_id },
             "search_after": [1],
+            "sort": [{ "_id": { "order": "asc" } }],
             "query": { "match_all": {} }
         }),
     )
     .await;
-    assert_eq!(search_after.status, 501);
+    assert_eq!(malformed_search_after.status, 400);
     assert_eq!(
-        search_after.body.unwrap()["error"]["type"],
-        "opensearch_lite_unsupported_api_exception"
+        malformed_search_after.body.unwrap()["error"]["type"],
+        "x_content_parse_exception"
     );
 }
 

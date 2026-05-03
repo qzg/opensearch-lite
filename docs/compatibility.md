@@ -69,7 +69,8 @@ Security does not make best-effort or fallback routes look implemented.
 - Field capabilities from mappings and observed documents
 - Search/count/msearch with `match_all`, `bool`, `term`, `terms`, `range`,
   `exists`, `ids`, simple `match`, `match_phrase_prefix`,
-  `simple_query_string`, and limited `nested`
+  `simple_query_string`, limited `nested`, scalar sort values, and `_search`
+  `search_after` cursor paging
 - First-tranche visualization aggregations: `terms`, `date_histogram`,
   `histogram`, `range`, `filters`, `missing`, `value_count`, `min`, `max`,
   `avg`, `sum`, `cardinality`, `stats`, and `top_hits`
@@ -77,7 +78,8 @@ Security does not make best-effort or fallback routes look implemented.
   saved-object reads
 - Process-local PIT create/list/delete lifecycle APIs with retained frozen
   database views; `_search` with `pit.id` reads the frozen view and refreshes
-  `pit.keep_alive` when supplied
+  `pit.keep_alive` when supplied, including `search_after` over deterministic
+  sort values
 - Native local snapshot repository management: repository create/get/delete,
   verify/cleanup, and snapshot create/get/delete under `--data-dir/repositories`
 - Reindex with synthetic completed task metadata for `tasks.get`
@@ -88,8 +90,9 @@ Mocked local no-op APIs return 200-series OpenSearch-shaped responses because
 the operation has no meaningful single-node effect. Security/control,
 unsupported snapshot restore/clone/status APIs, dangling-index, and destructive
 filesystem-like APIs still fail closed. PIT lifecycle is implemented as a
-read-class search context operation. `search_after` cursor pagination is not yet
-claimed and fails closed.
+read-class search context operation. `_msearch` requests that combine PIT or
+`search_after` with newline-delimited sub-searches remain unsupported and fail
+closed per item.
 
 ## Dashboards Compatibility
 

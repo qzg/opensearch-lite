@@ -180,6 +180,36 @@ async fn msearch_reports_item_errors_without_failing_whole_request() {
 }
 
 #[tokio::test]
+async fn msearch_pit_and_search_after_fail_closed_per_item() {
+    let state = ephemeral_state();
+
+    let response = ndjson_call(
+        &state,
+        Method::POST,
+        "/_msearch",
+        r#"{}
+{"pit":{"id":"pit-missing"},"query":{"match_all":{}}}
+{}
+{"sort":[{"_id":{"order":"asc"}}],"search_after":["1"],"query":{"match_all":{}}}
+"#,
+    )
+    .await;
+
+    assert_eq!(response.status, 200);
+    let body = response.body.unwrap();
+    assert_eq!(
+        body["responses"][0]["error"]["type"],
+        "opensearch_lite_unsupported_api_exception"
+    );
+    assert_eq!(body["responses"][0]["status"], 501);
+    assert_eq!(
+        body["responses"][1]["error"]["type"],
+        "opensearch_lite_unsupported_api_exception"
+    );
+    assert_eq!(body["responses"][1]["status"], 501);
+}
+
+#[tokio::test]
 async fn terms_match_phrase_prefix_and_wildcard_queries_work_for_scalar_scans() {
     let state = ephemeral_state();
     call(
@@ -581,4 +611,60 @@ async fn search_with_aggregations_still_honors_hit_pagination() {
         body["aggregations"]["by_status"]["buckets"][0]["doc_count"],
         3
     );
+}
+
+#[tokio::test]
+async fn sorted_search_returns_sort_values_and_accepts_search_after() {
+    let state = ephemeral_state();
+    for (id, rank) in [("1", 10), ("2", 20), ("3", 30)] {
+        call(
+            &state,
+            Method::PUT,
+            &format!("/orders/_doc/{id}"),
+            json!({ "rank": rank }),
+        )
+        .await;
+    }
+
+    let first = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({
+            "size": 2,
+            "query": { "match_all": {} },
+            "sort": [
+                { "rank": { "order": "asc" } },
+                { "_id": { "order": "asc" } }
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(first.status, 200);
+    let body = first.body.unwrap();
+    assert_eq!(body["hits"]["hits"][0]["_id"], "1");
+    assert_eq!(body["hits"]["hits"][1]["_id"], "2");
+    assert_eq!(body["hits"]["hits"][1]["sort"], json!([20, "2"]));
+
+    let after = body["hits"]["hits"][1]["sort"].clone();
+    let second = call(
+        &state,
+        Method::POST,
+        "/orders/_search",
+        json!({
+            "size": 2,
+            "query": { "match_all": {} },
+            "sort": [
+                { "rank": { "order": "asc" } },
+                { "_id": { "order": "asc" } }
+            ],
+            "search_after": after
+        }),
+    )
+    .await;
+    assert_eq!(second.status, 200);
+    let body = second.body.unwrap();
+    assert_eq!(body["hits"]["total"]["value"], 3);
+    assert_eq!(body["hits"]["hits"].as_array().unwrap().len(), 1);
+    assert_eq!(body["hits"]["hits"][0]["_id"], "3");
 }
