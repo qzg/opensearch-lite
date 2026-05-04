@@ -119,7 +119,7 @@ impl SnapshotService {
     pub fn delete_repository(&self, names: &str) -> StoreResult<Value> {
         self.ensure_persistent()?;
         let _lock = self.catalog_lock.lock().map_err(|_| lock_error())?;
-        let names = expand_names(names, self.repository_names()?, "repository")?;
+        let names = exact_names(names, self.repository_names()?, "repository")?;
         for name in names {
             let dir = self.repository_dir(&name);
             if !dir.exists() {
@@ -268,7 +268,7 @@ impl SnapshotService {
         let repository = validate_name(repository, "repository")?;
         let _lock = self.catalog_lock.lock().map_err(|_| lock_error())?;
         let mut data = self.read_latest(&repository)?;
-        let names = expand_names(names, data.snapshots.keys().cloned().collect(), "snapshot")?;
+        let names = exact_names(names, data.snapshots.keys().cloned().collect(), "snapshot")?;
         for name in names {
             if data.snapshots.remove(&name).is_none() {
                 return Err(snapshot_missing(&repository, &name));
@@ -408,6 +408,7 @@ fn validate_name(raw: &str, kind: &'static str) -> StoreResult<String> {
     let name = raw.trim();
     if name.is_empty()
         || matches!(name, "." | "..")
+        || matches!(name, "_all" | "all")
         || name.contains('/')
         || name.contains('\\')
         || name.contains(',')
@@ -482,6 +483,38 @@ fn expand_names(raw: &str, available: Vec<String>, kind: &'static str) -> StoreR
             .any(|name| matches!(*name, "_all" | "*" | "all"))
     {
         return Ok(available);
+    }
+    let mut names = Vec::new();
+    for name in requested {
+        let name = validate_name(name, kind)?;
+        if !available.contains(&name) {
+            return Err(match kind {
+                "repository" => repository_missing(&name),
+                _ => snapshot_missing("", &name),
+            });
+        }
+        names.push(name);
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn exact_names(raw: &str, available: Vec<String>, kind: &'static str) -> StoreResult<Vec<String>> {
+    let requested = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+    if requested.is_empty() {
+        return Err(match kind {
+            "repository" => invalid_repository(format!("invalid repository name [{raw}]")),
+            _ => StoreError::new(
+                400,
+                "invalid_snapshot_name_exception",
+                format!("invalid snapshot name [{raw}]"),
+            ),
+        });
     }
     let mut names = Vec::new();
     for name in requested {

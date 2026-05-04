@@ -315,6 +315,142 @@ async fn snapshot_repositories_reject_unsafe_names_types_and_locations() {
 }
 
 #[tokio::test]
+async fn snapshot_reserved_names_are_selectors_not_creatable_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = durable_state(temp.path());
+
+    assert_eq!(
+        call(&state, Method::PUT, "/orders", json!({})).await.status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/orders/_doc/1",
+            json!({ "status": "paid" }),
+        )
+        .await
+        .status,
+        201
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/_snapshot/local",
+            json!({ "type": "fs" })
+        )
+        .await
+        .status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/_snapshot/local/snap-1",
+            json!({ "indices": "orders" }),
+        )
+        .await
+        .status,
+        200
+    );
+
+    for repository in ["_all", "all"] {
+        let response = call(
+            &state,
+            Method::PUT,
+            &format!("/_snapshot/{repository}"),
+            json!({ "type": "fs" }),
+        )
+        .await;
+        assert_eq!(response.status, 400);
+        assert_eq!(
+            response.body.unwrap()["error"]["type"],
+            "repository_exception"
+        );
+    }
+
+    for snapshot in ["_all", "all"] {
+        let response = call(
+            &state,
+            Method::PUT,
+            &format!("/_snapshot/local/{snapshot}"),
+            json!({ "indices": "orders" }),
+        )
+        .await;
+        assert_eq!(response.status, 400);
+        assert_eq!(
+            response.body.unwrap()["error"]["type"],
+            "invalid_snapshot_name_exception"
+        );
+    }
+
+    for selector in ["_all", "all"] {
+        let repositories = call(
+            &state,
+            Method::GET,
+            &format!("/_snapshot/{selector}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(repositories.status, 200);
+        assert!(repositories.body.unwrap()["local"].is_object());
+
+        let snapshots = call(
+            &state,
+            Method::GET,
+            &format!("/_snapshot/local/{selector}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(snapshots.status, 200);
+        assert_eq!(
+            snapshots.body.unwrap()["snapshots"][0]["snapshot"],
+            "snap-1"
+        );
+    }
+
+    for repository in ["_all", "all", "%5Fall", "%61ll", "local,_all"] {
+        let response = call(
+            &state,
+            Method::DELETE,
+            &format!("/_snapshot/{repository}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(response.status, 400);
+        assert_eq!(
+            response.body.unwrap()["error"]["type"],
+            "repository_exception"
+        );
+
+        let existing = call(&state, Method::GET, "/_snapshot/local", Value::Null).await;
+        assert_eq!(existing.status, 200);
+    }
+
+    for snapshot in ["_all", "all", "%5Fall", "%61ll", "snap-1,_all"] {
+        let response = call(
+            &state,
+            Method::DELETE,
+            &format!("/_snapshot/local/{snapshot}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(response.status, 400);
+        assert_eq!(
+            response.body.unwrap()["error"]["type"],
+            "invalid_snapshot_name_exception"
+        );
+
+        let existing = call(&state, Method::GET, "/_snapshot/local/snap-1", Value::Null).await;
+        assert_eq!(existing.status, 200);
+        assert_eq!(existing.body.unwrap()["snapshots"][0]["snapshot"], "snap-1");
+    }
+}
+
+#[tokio::test]
 async fn snapshot_create_in_missing_repository_returns_repository_missing() {
     let temp = tempfile::tempdir().unwrap();
     let state = durable_state(temp.path());
