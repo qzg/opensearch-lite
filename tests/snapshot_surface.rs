@@ -171,6 +171,155 @@ async fn snapshot_repository_catalog_and_snapshots_are_restart_safe() {
 }
 
 #[tokio::test]
+async fn snapshot_restore_fails_closed_without_mutating_live_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = durable_state(temp.path());
+
+    assert_eq!(
+        call(&state, Method::PUT, "/orders", json!({})).await.status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/orders/_doc/1",
+            json!({ "generation": "snapshot" }),
+        )
+        .await
+        .status,
+        201
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/_snapshot/local",
+            json!({ "type": "fs" })
+        )
+        .await
+        .status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/_snapshot/local/snap-1",
+            json!({ "indices": "orders" }),
+        )
+        .await
+        .status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/orders/_doc/1",
+            json!({ "generation": "live" }),
+        )
+        .await
+        .status,
+        200
+    );
+
+    let restore = call(
+        &state,
+        Method::POST,
+        "/_snapshot/local/snap-1/_restore",
+        json!({
+            "indices": "orders",
+            "rename_pattern": "orders",
+            "rename_replacement": "restored-orders",
+            "include_global_state": false
+        }),
+    )
+    .await;
+    assert_eq!(restore.status, 501);
+    assert_eq!(
+        restore.body.unwrap()["error"]["type"],
+        "opensearch_lite_unsupported_api_exception"
+    );
+
+    let live = call(&state, Method::GET, "/orders/_doc/1", Value::Null).await;
+    assert_eq!(live.status, 200);
+    assert_eq!(live.body.unwrap()["_source"]["generation"], "live");
+
+    let renamed = call(&state, Method::GET, "/restored-orders/_doc/1", Value::Null).await;
+    assert_eq!(renamed.status, 404);
+
+    let snapshot = call(&state, Method::GET, "/_snapshot/local/snap-1", Value::Null).await;
+    assert_eq!(snapshot.status, 200);
+    assert_eq!(snapshot.body.unwrap()["snapshots"][0]["snapshot"], "snap-1");
+}
+
+#[tokio::test]
+async fn snapshot_operation_tokens_in_name_slot_fail_closed_without_creating_snapshots() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = durable_state(temp.path());
+
+    assert_eq!(
+        call(&state, Method::PUT, "/orders", json!({})).await.status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/orders/_doc/1",
+            json!({ "status": "paid" }),
+        )
+        .await
+        .status,
+        201
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/_snapshot/local",
+            json!({ "type": "fs" })
+        )
+        .await
+        .status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/_snapshot/local/snap-1",
+            json!({ "indices": "orders" }),
+        )
+        .await
+        .status,
+        200
+    );
+
+    for (method, path) in [
+        (Method::POST, "/_snapshot/local/_restore"),
+        (Method::POST, "/_snapshot/local/%5Frestore"),
+        (Method::PUT, "/_snapshot/local/_clone"),
+        (Method::PUT, "/_snapshot/local/%5Fclone"),
+    ] {
+        let response = call(&state, method, path, json!({ "indices": "orders" })).await;
+        assert_eq!(response.status, 501, "{path}");
+        assert_eq!(
+            response.body.unwrap()["error"]["type"],
+            "opensearch_lite_unsupported_api_exception"
+        );
+    }
+
+    let snapshots = call(&state, Method::GET, "/_snapshot/local/_all", Value::Null).await;
+    assert_eq!(snapshots.status, 200);
+    assert_eq!(
+        snapshots.body.unwrap()["snapshots"][0]["snapshot"],
+        "snap-1"
+    );
+}
+
+#[tokio::test]
 async fn snapshot_cleanup_preserves_blobs_referenced_by_remaining_snapshots() {
     let temp = tempfile::tempdir().unwrap();
     let state = durable_state(temp.path());
@@ -372,7 +521,7 @@ async fn snapshot_reserved_names_are_selectors_not_creatable_names() {
         );
     }
 
-    for snapshot in ["_all", "all"] {
+    for snapshot in ["_all", "all", "_hidden"] {
         let response = call(
             &state,
             Method::PUT,

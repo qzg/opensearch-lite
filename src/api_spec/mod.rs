@@ -739,6 +739,12 @@ fn classify_snapshot(method: &Method, segments: &[&str]) -> RouteMatch {
                 AccessClass::Admin,
             ),
         },
+        ["_snapshot", _, "_restore"] => {
+            route("snapshot.restore", Tier::Unsupported, AccessClass::Admin)
+        }
+        ["_snapshot", _, "_clone"] => {
+            route("snapshot.clone", Tier::Unsupported, AccessClass::Admin)
+        }
         ["_snapshot", _, _, "_restore"] => {
             route("snapshot.restore", Tier::Unsupported, AccessClass::Admin)
         }

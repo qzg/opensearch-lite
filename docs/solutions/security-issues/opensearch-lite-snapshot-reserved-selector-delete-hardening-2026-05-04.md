@@ -8,6 +8,7 @@ component: service_object
 symptoms:
   - "`PUT /_snapshot/_all` and `PUT /_snapshot/local/all` could be blocked while `DELETE` still expanded those tokens destructively"
   - "`DELETE /_snapshot/_all` and `DELETE /_snapshot/local/_all` could delete every repository or snapshot through shared selector expansion"
+  - "`POST /_snapshot/local/_restore` could be classified as snapshot creation instead of an unsupported restore-family route"
   - "The initial regression covered create rejection and read selector expansion but missed destructive delete paths"
 root_cause: missing_validation
 resolution_type: code_fix
@@ -40,6 +41,9 @@ fan out to every repository or snapshot.
   errors, but `DELETE /_snapshot/_all` still returned success.
 - `delete_repository` and `delete_snapshot` called `expand_names`, whose
   reserved-token branch expands `_all`, `all`, or `*` to every available name.
+- Underscore-prefixed snapshot operation tokens such as `_restore` or `_clone`
+  could still reach the generic snapshot create route when they appeared in the
+  snapshot-name slot.
 - The regression test checked `PUT` rejection and `GET` selector expansion, but
   it did not assert that rejected `DELETE` calls preserve existing data.
 
@@ -117,13 +121,40 @@ fn exact_names(raw: &str, available: Vec<String>, kind: &'static str) -> StoreRe
 }
 ```
 
+Snapshot names also reject a leading underscore. This matches OpenSearch's
+snapshot-name validation and prevents future operation tokens from falling
+through generic snapshot-name paths:
+
+```rust
+if kind == "snapshot" && name.starts_with('_') {
+    return Err(StoreError::new(
+        400,
+        "invalid_snapshot_name_exception",
+        format!("invalid snapshot name [{raw}]"),
+    ));
+}
+```
+
+Route classification handles malformed operation-token shapes before the generic
+snapshot create/get/delete arm:
+
+```rust
+["_snapshot", _, "_restore"] => route("snapshot.restore", Tier::Unsupported, AccessClass::Admin),
+["_snapshot", _, "_clone"] => route("snapshot.clone", Tier::Unsupported, AccessClass::Admin),
+```
+
 The regression now exercises the full policy boundary:
 
 - `PUT /_snapshot/_all` and `PUT /_snapshot/local/all` fail validation.
+- `PUT /_snapshot/local/_hidden` fails validation because snapshot names may not
+  start with `_`.
 - `GET /_snapshot/_all` and `GET /_snapshot/local/_all` still expand as read
   selectors.
 - `DELETE /_snapshot/_all`, `DELETE /_snapshot/all`, encoded reserved tokens,
   and mixed lists such as `local,_all` fail validation.
+- `POST /_snapshot/local/_restore`, encoded `_restore`, `PUT
+  /_snapshot/local/_clone`, and encoded `_clone` return unsupported without
+  creating snapshots.
 - After each rejected delete request, the test re-reads the existing repository
   or snapshot to prove no broad mutation happened.
 
@@ -146,6 +177,8 @@ same reserved-name validation as creation.
   that is valid for `GET` list expansion is not automatically valid for `DELETE`.
 - When adding reserved-name validation, search for every helper that can
   interpret those names, not just create/update paths.
+- Reserve operation-token shapes in the route classifier before generic
+  name-slot arms, and include percent-encoded token forms in the regression.
 - Regression tests for mutating selector boundaries should assert both the error
   response and the absence of side effects.
 - Include encoded and mixed-list forms in destructive-route tests because the

@@ -83,7 +83,9 @@ Security does not make best-effort or fallback routes look implemented.
   sort values
 - Native local snapshot repository management: repository create/get/delete,
   verify/cleanup, and snapshot create/get/delete under `--data-dir/repositories`
-  in durable mode; snapshot APIs fail closed under `--ephemeral`
+  in durable mode; snapshot APIs fail closed under `--ephemeral`; restore is
+  intentionally deferred and remains a fail-closed admin route with no state
+  mutation
 - Reindex with synthetic completed task metadata for `tasks.get`
 - Delete by query and narrow saved-object namespace/workspace update by query
 

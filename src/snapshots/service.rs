@@ -409,6 +409,7 @@ fn validate_name(raw: &str, kind: &'static str) -> StoreResult<String> {
     if name.is_empty()
         || matches!(name, "." | "..")
         || matches!(name, "_all" | "all")
+        || (kind == "snapshot" && name.starts_with('_'))
         || name.contains('/')
         || name.contains('\\')
         || name.contains(',')

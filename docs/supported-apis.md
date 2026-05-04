@@ -46,7 +46,11 @@ and `admin` requires `admin`.
 | `create_pit`, `get_all_pits`, `delete_pit`, `delete_all_pits` | implemented | read | Process-local PIT contexts with bounded retained frozen database views. `_search` with `pit.id` reads the frozen view and can refresh `pit.keep_alive`; PIT searches include a deterministic `_shard_doc` sort tie-breaker. |
 | `reindex`, `tasks.get` | implemented | write/read | Reindex executes synchronously against local data; `wait_for_completion=false` returns a synthetic completed task for polling clients. |
 | `delete_by_query`, `update_by_query` | implemented/narrow | write | Query-matched local mutation. `update_by_query` only supports the saved-object namespace/workspace removal scripts used by Dashboards-style clients. |
-| `snapshot.get_repository`, `snapshot.create_repository`, `snapshot.delete_repository`, `snapshot.verify_repository`, `snapshot.cleanup_repository`, `snapshot.create`, `snapshot.get`, `snapshot.delete` | implemented | admin | Local native repository catalog under `--data-dir/repositories` in durable mode; snapshot APIs fail closed under `--ephemeral`. `_all` and `all` are read/list selector tokens, not valid repository or snapshot names for create/delete targets. Snapshot restore, clone, status, remote repository plugins, and distributed shard semantics remain unsupported. |
+| `snapshot.get_repository`, `snapshot.create_repository`, `snapshot.delete_repository`, `snapshot.verify_repository`, `snapshot.cleanup_repository`, `snapshot.create`, `snapshot.get`, `snapshot.delete` | implemented | admin | Local native repository catalog under `--data-dir/repositories` in durable mode; snapshot APIs fail closed under `--ephemeral`. `_all` and `all` are read/list selector tokens, not valid repository or snapshot names for create/delete targets; snapshot names starting with `_` are reserved for API operation tokens. Snapshot restore, clone, status, remote repository plugins, and distributed shard semantics remain unsupported. |
+
+Snapshot restore routes are recognized as admin APIs but intentionally remain
+unsupported. They return fail-closed unsupported responses and do not route to
+runtime fallback or mutate local state.
 
 The first Dashboards-shaped fixture tranches cover data-view metadata,
 Discover-style search, simple visualization aggregations, and saved-object

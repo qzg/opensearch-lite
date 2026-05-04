@@ -10,7 +10,9 @@ unauthorized requests, and it is denied for security/control namespaces such as
 task-control APIs. Implemented snapshot repository management routes are
 handled deterministically after admin authorization in durable mode; snapshot
 APIs fail closed under `--ephemeral`, and unsupported snapshot subpaths fail
-closed. PIT lifecycle routes are deterministic read-class runtime
+closed. Snapshot restore, clone, and status routes are recognized admin APIs
+that return unsupported responses without invoking fallback. PIT lifecycle
+routes are deterministic read-class runtime
 operations, and `_search` with `pit.id` uses the retained frozen runtime view.
 `search_after` cursor paging is deterministic for `_search`, including
 non-unique sort values; `_msearch` requests with PIT or `search_after` still

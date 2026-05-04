@@ -149,10 +149,32 @@ fn snapshot_routes_are_admin_implemented_or_fail_closed() {
             "snapshot.restore",
         ),
         (
+            Method::POST,
+            "/_snapshot/local/_restore",
+            "snapshot.restore",
+        ),
+        (
+            Method::POST,
+            "/_snapshot/local/%5Frestore",
+            "snapshot.restore",
+        ),
+        (
+            Method::GET,
+            "/_snapshot/local/snap-1/_restore",
+            "snapshot.restore",
+        ),
+        (
+            Method::POST,
+            "/_snapshot/local/snap-1/%5Frestore",
+            "snapshot.restore",
+        ),
+        (
             Method::PUT,
             "/_snapshot/local/snap-1/_clone/other",
             "snapshot.clone",
         ),
+        (Method::PUT, "/_snapshot/local/_clone", "snapshot.clone"),
+        (Method::PUT, "/_snapshot/local/%5Fclone", "snapshot.clone"),
         (
             Method::GET,
             "/_snapshot/local/_verify",
