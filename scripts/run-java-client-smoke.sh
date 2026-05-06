@@ -14,9 +14,13 @@ fi
 SERVER_PID=""
 SECURITY_DIR=""
 USE_DOCKER=0
+USE_DOCKER_HOST_NETWORK=0
 
 if ! command -v mvn >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
   USE_DOCKER=1
+  if [[ "$(docker info --format '{{.OSType}}' 2>/dev/null || true)" == "linux" ]]; then
+    USE_DOCKER_HOST_NETWORK=1
+  fi
 fi
 
 cleanup() {
@@ -47,7 +51,7 @@ if [[ -z "${OPENSEARCH_URL:-}" && "${SECURE_SMOKE}" == "1" ]]; then
     -keyout "${SECURITY_DIR}/key.pem" \
     -out "${SECURITY_DIR}/cert.pem" >/dev/null 2>&1
   cat >"${SECURITY_DIR}/users.json" <<'JSON'
-{"users":[{"username":"smoke","password_hash":"$argon2id$v=19$m=19456,t=2,p=1$b3BlbnNlYXJjaC1saXRl$yb2+WOV4yTxfqlWaoWwrZM6fZfxVj0LwU8tbuI4UZNM","roles":["admin"]}]}
+{"users":[{"username":"smoke","password_hash":"$argon2id$v=19$m=19456,t=2,p=1$bWFpbnN0YWNrLXNlYXJjaA$qQUjOHa/zfhUvKG9++ip/V1R8o3/1mvUcgb2W8lwRIU","roles":["admin"]}]}
 JSON
   export OPENSEARCH_CA_CERT="${SECURITY_DIR}/cert.pem"
   export OPENSEARCH_USERNAME="smoke"
@@ -57,9 +61,12 @@ fi
 if [[ -z "${OPENSEARCH_URL:-}" ]]; then
   LISTEN_ADDR="127.0.0.1:${PORT}"
   EXTRA_SERVER_ARGS=()
-  if [[ "${USE_DOCKER}" == "1" ]]; then
+  if [[ "${USE_DOCKER}" == "1" && "${USE_DOCKER_HOST_NETWORK}" != "1" ]]; then
     LISTEN_ADDR="0.0.0.0:${PORT}"
     EXTRA_SERVER_ARGS=(--allow-nonlocal-listen)
+    if [[ "${SECURE_SMOKE}" != "1" ]]; then
+      EXTRA_SERVER_ARGS+=(--allow-insecure-non-loopback)
+    fi
   fi
   if [[ "${SECURE_SMOKE}" == "1" ]]; then
     EXTRA_SERVER_ARGS+=(
@@ -96,13 +103,16 @@ if command -v mvn >/dev/null 2>&1; then
     OPENSEARCH_URL="${URL}" mvn -q ${OPENSEARCH_JAVA_CLIENT_VERSION:+-Dopensearch-java.version="${OPENSEARCH_JAVA_CLIENT_VERSION}"} compile exec:java
   )
 elif command -v docker >/dev/null 2>&1; then
-  DOCKER_URL="${URL/127.0.0.1/host.docker.internal}"
-  DOCKER_URL="${DOCKER_URL/localhost/host.docker.internal}"
-  DOCKER_ARGS=(
-    --rm
-    --add-host=host.docker.internal:host-gateway
-    -e "OPENSEARCH_URL=${DOCKER_URL}"
-  )
+  DOCKER_URL="${URL}"
+  DOCKER_ARGS=(--rm)
+  if [[ "${USE_DOCKER_HOST_NETWORK}" == "1" ]]; then
+    DOCKER_ARGS+=(--network host)
+  else
+    DOCKER_URL="${DOCKER_URL/127.0.0.1/host.docker.internal}"
+    DOCKER_URL="${DOCKER_URL/localhost/host.docker.internal}"
+    DOCKER_ARGS+=(--add-host=host.docker.internal:host-gateway)
+  fi
+  DOCKER_ARGS+=(-e "OPENSEARCH_URL=${DOCKER_URL}")
   if [[ -n "${OPENSEARCH_USERNAME:-}" ]]; then
     DOCKER_ARGS+=(-e "OPENSEARCH_USERNAME=${OPENSEARCH_USERNAME}")
   fi

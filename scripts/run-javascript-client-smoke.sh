@@ -49,7 +49,7 @@ if [[ -z "${OPENSEARCH_URL:-}" && "${SECURE_SMOKE}" == "1" ]]; then
     -keyout "${SECURITY_DIR}/key.pem" \
     -out "${SECURITY_DIR}/cert.pem" >/dev/null 2>&1
   cat >"${SECURITY_DIR}/users.json" <<'JSON'
-{"users":[{"username":"smoke","password_hash":"$argon2id$v=19$m=19456,t=2,p=1$b3BlbnNlYXJjaC1saXRl$yb2+WOV4yTxfqlWaoWwrZM6fZfxVj0LwU8tbuI4UZNM","roles":["admin"]}]}
+{"users":[{"username":"smoke","password_hash":"$argon2id$v=19$m=19456,t=2,p=1$bWFpbnN0YWNrLXNlYXJjaA$qQUjOHa/zfhUvKG9++ip/V1R8o3/1mvUcgb2W8lwRIU","roles":["admin"]}]}
 JSON
   export OPENSEARCH_CA_CERT="${SECURITY_DIR}/cert.pem"
   export OPENSEARCH_USERNAME="smoke"

@@ -511,7 +511,8 @@ mod tests {
 
     #[test]
     fn rejects_non_loopback_without_opt_in() {
-        let error = Config::from_args(["mainstack-search", "--listen", "0.0.0.0:9200"]).unwrap_err();
+        let error =
+            Config::from_args(["mainstack-search", "--listen", "0.0.0.0:9200"]).unwrap_err();
         assert!(error.contains("--allow-nonlocal-listen"));
     }
 

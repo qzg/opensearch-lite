@@ -26,7 +26,11 @@ async fn main() {
     let candidates = parse_candidate_sample(&sample);
     let report = dry_run_report(&fixtures, &candidates);
 
-    if env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH").ok().as_deref() != Some("1") {
+    if env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
         println!("{report}");
         println!(
             "agent_fallback_models: dry-run only; set MAINSTACK_SEARCH_LIVE_AGENT_BENCH=1 with ignored local credentials for live OpenRouter/Artificial Analysis runs"

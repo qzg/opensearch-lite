@@ -130,5 +130,7 @@ fn config_validation_rejects_mismatched_certificate_and_key() {
     });
 
     let error = server::validate_config(&config).unwrap_err();
-    assert!(!error.to_string().contains("mainstack-search-smoke-password"));
+    assert!(!error
+        .to_string()
+        .contains("mainstack-search-smoke-password"));
 }
