@@ -32,22 +32,22 @@ MSG
     exit 2
   fi
   REAL_PORT="${REAL_PORT:-19203}"
-  DOCKER_CONTAINER="opensearch-lite-parity-$$"
+  DOCKER_CONTAINER="mainstack-search-parity-$$"
   docker run -d --name "${DOCKER_CONTAINER}" \
     -p "${REAL_PORT}:9200" \
     -e discovery.type=single-node \
     -e plugins.security.disabled=true \
-    -e OPENSEARCH_INITIAL_ADMIN_PASSWORD='OpenSearchLite1!' \
+    -e OPENSEARCH_INITIAL_ADMIN_PASSWORD='MainstackSearch1!' \
     opensearchproject/opensearch:3.6.0 >/dev/null
   REAL_URL="http://127.0.0.1:${REAL_PORT}"
 fi
 
 cargo build --quiet --manifest-path "${ROOT_DIR}/Cargo.toml"
-"${ROOT_DIR}/target/debug/opensearch-lite" \
+"${ROOT_DIR}/target/debug/mainstack-search" \
   --ephemeral \
   --listen "${LITE_ADDR}" \
   --max-body-size 32MiB \
-  --max-documents 10000 >/tmp/opensearch-lite-parity.log 2>&1 &
+  --max-documents 10000 >/tmp/mainstack-search-parity.log 2>&1 &
 LITE_PID=$!
 
 python3 - "$LITE_URL" "$REAL_URL" <<'PY'
@@ -100,8 +100,8 @@ def wait_for(base):
 
 
 def cleanup(base):
-    request(base, "DELETE", "/axon-parity")
-    request(base, "DELETE", "/axon-parity-extra")
+    request(base, "DELETE", "/mainstack-parity")
+    request(base, "DELETE", "/mainstack-parity-extra")
 
 
 def run_flow(base):
@@ -109,7 +109,7 @@ def run_flow(base):
     status, _ = request(
         base,
         "PUT",
-        "/axon-parity",
+        "/mainstack-parity",
         {
             "settings": {"number_of_shards": 1, "number_of_replicas": 0},
             "mappings": {
@@ -126,7 +126,7 @@ def run_flow(base):
     status, _ = request(
         base,
         "PUT",
-        "/axon-parity/_mapping",
+        "/mainstack-parity/_mapping",
         {"properties": {"customer_id": {"type": "keyword"}}},
     )
     assert status == 200, (base, "put mapping", status)
@@ -135,7 +135,7 @@ def run_flow(base):
         base,
         "POST",
         "/_aliases",
-        {"actions": [{"add": {"index": "axon-parity", "alias": "axon-parity-read"}}]},
+        {"actions": [{"add": {"index": "mainstack-parity", "alias": "mainstack-parity-read"}}]},
     )
     assert status == 200, (base, "add alias", status)
 
@@ -143,17 +143,17 @@ def run_flow(base):
         "1": {"status": "paid", "total": 42.5, "name": "Northwind espresso", "customer_id": "c1"},
         "2": {"status": "refunded", "total": 12.0, "name": "Contoso filter", "customer_id": "c2"},
     }.items():
-        status, _ = request(base, "PUT", f"/axon-parity/_doc/{doc_id}", source)
+        status, _ = request(base, "PUT", f"/mainstack-parity/_doc/{doc_id}", source)
         assert status in (200, 201), (base, "put doc", doc_id, status)
 
-    status, _ = request(base, "PUT", "/axon-parity/_create/1", {"status": "duplicate"})
+    status, _ = request(base, "PUT", "/mainstack-parity/_create/1", {"status": "duplicate"})
     assert status == 409, (base, "duplicate create", status)
 
     bulk = "\n".join(
         [
-            '{"index":{"_index":"axon-parity","_id":"3"}}',
+            '{"index":{"_index":"mainstack-parity","_id":"3"}}',
             '{"status":"paid","total":99.0,"name":"Northwind tamper","customer_id":"c3"}',
-            '{"update":{"_index":"axon-parity","_id":"2"}}',
+            '{"update":{"_index":"mainstack-parity","_id":"2"}}',
             '{"doc":{"status":"paid"}}',
             "",
         ]
@@ -161,34 +161,34 @@ def run_flow(base):
     status, body = request(base, "POST", "/_bulk", bulk, "application/x-ndjson")
     assert status == 200 and body["errors"] is False, (base, "bulk", status, body)
 
-    refresh_status, _ = request(base, "POST", "/axon-parity/_refresh")
+    refresh_status, _ = request(base, "POST", "/mainstack-parity/_refresh")
     assert refresh_status == 200, (base, "refresh", refresh_status)
 
-    status, body = request(base, "POST", "/axon-parity/_mget", {"ids": ["1", "2", "missing"]})
+    status, body = request(base, "POST", "/mainstack-parity/_mget", {"ids": ["1", "2", "missing"]})
     assert status == 200, (base, "mget", status)
     assert [doc["found"] for doc in body["docs"]] == [True, True, False], body
 
-    status, body = request(base, "POST", "/axon-parity/_mget?_source=status", {"ids": ["1"]})
+    status, body = request(base, "POST", "/mainstack-parity/_mget?_source=status", {"ids": ["1"]})
     assert status == 200, (base, "mget source filter", status)
     assert body["docs"][0]["_source"] == {"status": "paid"}, body
 
-    status, body = request(base, "GET", "/axon-parity/_source/1?_source=status")
+    status, body = request(base, "GET", "/mainstack-parity/_source/1?_source=status")
     assert status == 200, (base, "get source", status)
     assert body == {"status": "paid"}, body
 
-    status, body = request(base, "GET", "/axon-parity/_mapping/field/status?include_defaults=true")
+    status, body = request(base, "GET", "/mainstack-parity/_mapping/field/status?include_defaults=true")
     assert status == 200, (base, "field mapping", status)
-    assert "axon-parity" in body and "mappings" in body["axon-parity"], body
+    assert "mainstack-parity" in body and "mappings" in body["mainstack-parity"], body
 
-    status, body = request(base, "GET", "/axon-parity/_stats")
+    status, body = request(base, "GET", "/mainstack-parity/_stats")
     assert status == 200, (base, "stats", status)
-    assert "axon-parity" in body["indices"], body
-    assert body["indices"]["axon-parity"]["primaries"]["docs"]["count"] >= 3, body
+    assert "mainstack-parity" in body["indices"], body
+    assert body["indices"]["mainstack-parity"]["primaries"]["docs"]["count"] >= 3, body
 
     status, body = request(
         base,
         "POST",
-        "/axon-parity/_update/upserted?_source=status",
+        "/mainstack-parity/_update/upserted?_source=status",
         {"doc": {"status": "ignored"}, "upsert": {"status": "from-upsert"}},
     )
     assert status == 201, (base, "update upsert", status)
@@ -198,7 +198,7 @@ def run_flow(base):
     status, body = request(
         base,
         "POST",
-        "/axon-parity/_count",
+        "/mainstack-parity/_count",
         {"query": {"term": {"status": "paid"}}},
     )
     assert status == 200 and body["count"] == 3, (base, "count", status, body)
@@ -206,7 +206,7 @@ def run_flow(base):
     status, body = request(
         base,
         "POST",
-        "/axon-parity-read/_search",
+        "/mainstack-parity-read/_search",
         {"query": {"range": {"total": {"gte": 40}}}, "sort": [{"total": {"order": "asc"}}]},
     )
     assert status == 200, (base, "search", status)
@@ -215,7 +215,7 @@ def run_flow(base):
     status, body = request(
         base,
         "POST",
-        "/axon-parity/_search",
+        "/mainstack-parity/_search",
         {
             "size": 0,
             "aggs": {
@@ -231,9 +231,9 @@ def run_flow(base):
 
     msearch = "\n".join(
         [
-            '{"index":"axon-parity"}',
+            '{"index":"mainstack-parity"}',
             '{"query":{"term":{"status":"paid"}}}',
-            '{"index":"axon-parity"}',
+            '{"index":"mainstack-parity"}',
             '{"query":{"ids":{"values":["1"]}}}',
             "",
         ]

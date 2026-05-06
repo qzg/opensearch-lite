@@ -215,13 +215,13 @@ impl MutationLogSyncer {
         });
         let thread_state = Arc::clone(&state);
         let handle = match thread::Builder::new()
-            .name("opensearch-lite-mutation-log-sync".to_string())
+            .name("mainstack-search-mutation-log-sync".to_string())
             .spawn(move || run_mutation_log_syncer(thread_state))
         {
             Ok(handle) => Some(handle),
             Err(error) => {
                 eprintln!(
-                    "opensearch-lite mutation log warning: delayed sync thread did not start: {error}"
+                    "mainstack-search mutation log warning: delayed sync thread did not start: {error}"
                 );
                 None
             }
@@ -234,7 +234,7 @@ impl MutationLogSyncer {
 
     fn mark_dirty(&self) {
         let Ok(mut dirty) = self.state.dirty.lock() else {
-            eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+            eprintln!("mainstack-search mutation log warning: sync state lock is poisoned");
             return;
         };
         *dirty = true;
@@ -258,12 +258,12 @@ impl Drop for MutationLogSyncer {
 fn run_mutation_log_syncer(state: Arc<MutationLogSyncThreadState>) {
     loop {
         let Ok(mut dirty) = state.dirty.lock() else {
-            eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+            eprintln!("mainstack-search mutation log warning: sync state lock is poisoned");
             return;
         };
         while !*dirty && !state.stop.load(Ordering::SeqCst) {
             let Ok(next_dirty) = state.changed.wait(dirty) else {
-                eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+                eprintln!("mainstack-search mutation log warning: sync state lock is poisoned");
                 return;
             };
             dirty = next_dirty;
@@ -279,7 +279,7 @@ fn run_mutation_log_syncer(state: Arc<MutationLogSyncThreadState>) {
             }
             let remaining = MUTATION_LOG_SYNC_INTERVAL - elapsed;
             let Ok((next_dirty, _)) = state.changed.wait_timeout(dirty, remaining) else {
-                eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+                eprintln!("mainstack-search mutation log warning: sync state lock is poisoned");
                 return;
             };
             dirty = next_dirty;
@@ -293,7 +293,7 @@ fn run_mutation_log_syncer(state: Arc<MutationLogSyncThreadState>) {
         *dirty = false;
         drop(dirty);
         if let Err(error) = mutation_log::sync(&state.path) {
-            eprintln!("opensearch-lite mutation log warning: delayed sync failed: {error}");
+            eprintln!("mainstack-search mutation log warning: delayed sync failed: {error}");
             if let Ok(mut dirty) = state.dirty.lock() {
                 *dirty = true;
             }
@@ -309,13 +309,13 @@ fn sync_dirty_mutation_log_now(state: &MutationLogSyncThreadState) {
             was_dirty
         }
         Err(_) => {
-            eprintln!("opensearch-lite mutation log warning: sync state lock is poisoned");
+            eprintln!("mainstack-search mutation log warning: sync state lock is poisoned");
             false
         }
     };
     if dirty_was_set {
         if let Err(error) = mutation_log::sync(&state.path) {
-            eprintln!("opensearch-lite mutation log warning: final sync failed: {error}");
+            eprintln!("mainstack-search mutation log warning: final sync failed: {error}");
         }
     }
 }
@@ -426,7 +426,7 @@ fn repair_dashboards_encoded_document_ids(
     snapshot_state.dirty_since = Some(SystemTime::now());
     snapshot_state.last_transaction_id = Some(transaction_id);
     eprintln!(
-        "opensearch-lite repaired {} legacy Dashboards saved-object document IDs from encoded path form",
+        "mainstack-search repaired {} legacy Dashboards saved-object document IDs from encoded path form",
         mutations.len()
     );
     Ok(())
@@ -447,7 +447,7 @@ fn plan_dashboards_encoded_document_id_repairs(db: &Database) -> Vec<Mutation> {
             }
             if index.documents.contains_key(&decoded) || !planned_ids.insert(decoded.clone()) {
                 eprintln!(
-                    "opensearch-lite skipped legacy Dashboards saved-object ID repair for [{index_name}/{id}] because decoded ID [{decoded}] already exists"
+                    "mainstack-search skipped legacy Dashboards saved-object ID repair for [{index_name}/{id}] because decoded ID [{decoded}] already exists"
                 );
                 continue;
             }
@@ -785,7 +785,7 @@ impl Store {
             return;
         }
         let Ok(mut state) = self.snapshot_state.lock() else {
-            eprintln!("opensearch-lite snapshot warning: snapshot state lock is poisoned");
+            eprintln!("mainstack-search snapshot warning: snapshot state lock is poisoned");
             return;
         };
         let now = SystemTime::now();
@@ -809,11 +809,11 @@ impl Store {
         let last_transaction_id = state.last_transaction_id.clone();
 
         let Ok(_snapshot) = self.snapshot_lock.lock() else {
-            eprintln!("opensearch-lite snapshot warning: snapshot lock is poisoned");
+            eprintln!("mainstack-search snapshot warning: snapshot lock is poisoned");
             return;
         };
         if let Err(error) = self.write_snapshot_generation(db, generation, last_transaction_id) {
-            eprintln!("opensearch-lite snapshot warning: {error}");
+            eprintln!("mainstack-search snapshot warning: {error}");
             return;
         }
         state.generation = generation;
@@ -1987,7 +1987,7 @@ impl Mutation {
 }
 
 fn open_data_lock(data_dir: &std::path::Path) -> io::Result<File> {
-    let lock_path = data_dir.join(".opensearch-lite.lock");
+    let lock_path = data_dir.join(".mainstack-search.lock");
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)

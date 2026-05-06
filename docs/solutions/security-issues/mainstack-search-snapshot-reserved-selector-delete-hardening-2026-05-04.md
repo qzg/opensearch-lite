@@ -1,9 +1,9 @@
 ---
-title: OpenSearch Lite Snapshot Reserved Selector Delete Hardening
+title: mainstack-search Snapshot Reserved Selector Delete Hardening
 date: 2026-05-04
 last_updated: 2026-05-04
 category: security-issues
-module: opensearch-lite snapshot APIs
+module: mainstack-search snapshot APIs
 problem_type: security_issue
 component: service_object
 symptoms:
@@ -18,7 +18,7 @@ related_components:
   - testing_framework
   - documentation
 tags:
-  - opensearch-lite
+  - mainstack-search
   - snapshot-api
   - route-safety
   - selector-expansion
@@ -26,11 +26,11 @@ tags:
   - fail-closed
 ---
 
-# OpenSearch Lite Snapshot Reserved Selector Delete Hardening
+# mainstack-search Snapshot Reserved Selector Delete Hardening
 
 ## Problem
 
-OpenSearch Lite needed to reserve `_all` and `all` as snapshot selector tokens
+mainstack-search needed to reserve `_all` and `all` as snapshot selector tokens
 rather than literal repository or snapshot names. The first fix rejected those
 names during create operations, but destructive delete paths still reused the
 same selector expansion helper as read/list APIs, so reserved tokens could still
@@ -205,7 +205,7 @@ literal-name validation.
 
 ## Related Issues
 
-- [OpenSearch Lite P1 Code Review Hardening](opensearch-lite-p1-code-review-hardening-2026-04-29.md)
-- [OpenSearch Lite Agent Write Fallback And Durable Replay Hardening](opensearch-lite-agent-write-fallback-durable-replay-hardening-2026-04-30.md)
-- [OpenSearch Lite Kubernetes Workgroup Security](opensearch-lite-kubernetes-workgroup-security-2026-04-30.md)
-- [OpenSearch Lite Dashboards Migration API Surface Hardening](../integration-issues/opensearch-lite-dashboards-migration-api-surface-hardening-2026-04-30.md)
+- [mainstack-search P1 Code Review Hardening](mainstack-search-p1-code-review-hardening-2026-04-29.md)
+- [mainstack-search Agent Write Fallback And Durable Replay Hardening](mainstack-search-agent-write-fallback-durable-replay-hardening-2026-04-30.md)
+- [mainstack-search Kubernetes Workgroup Security](mainstack-search-kubernetes-workgroup-security-2026-04-30.md)
+- [mainstack-search Dashboards Migration API Surface Hardening](../integration-issues/mainstack-search-dashboards-migration-api-surface-hardening-2026-04-30.md)

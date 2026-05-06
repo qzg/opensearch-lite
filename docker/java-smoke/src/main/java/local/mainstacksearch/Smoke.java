@@ -1,4 +1,4 @@
-package local.opensearchlite;
+package local.mainstacksearch;
 
 import java.io.InputStream;
 import java.net.URI;
@@ -160,7 +160,7 @@ public class Smoke {
     }
     KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
     trustStore.load(null, null);
-    trustStore.setCertificateEntry("opensearch-lite-ca", certificate);
+    trustStore.setCertificateEntry("mainstack-search-ca", certificate);
     TrustManagerFactory trustManagerFactory =
         TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
     trustManagerFactory.init(trustStore);

@@ -6,7 +6,7 @@ pub fn cluster_health(api_name: &str) -> Response {
     Response::json(
         200,
         json!({
-            "cluster_name": "opensearch-lite",
+            "cluster_name": "mainstack-search",
             "status": "green",
             "timed_out": false,
             "number_of_nodes": 1,
@@ -35,10 +35,10 @@ pub fn nodes_info(
     filter_path: Option<&str>,
 ) -> Response {
     let body = json!({
-        "cluster_name": "opensearch-lite",
+        "cluster_name": "mainstack-search",
         "nodes": {
-            "opensearch-lite-local-node": {
-                "name": "opensearch-lite",
+            "mainstack-search-local-node": {
+                "name": "mainstack-search",
                 "version": advertised_version,
                 "ip": node_ip,
                 "http": {
@@ -63,10 +63,10 @@ pub struct NodesStatsMetadata<'a> {
 
 pub fn nodes_stats(api_name: &str, metadata: NodesStatsMetadata<'_>) -> Response {
     let body = json!({
-        "cluster_name": "opensearch-lite",
+        "cluster_name": "mainstack-search",
         "nodes": {
-            "opensearch-lite-local-node": {
-                "name": "opensearch-lite",
+            "mainstack-search-local-node": {
+                "name": "mainstack-search",
                 "version": metadata.advertised_version,
                 "host": metadata.node_ip,
                 "ip": metadata.node_ip,

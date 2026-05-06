@@ -3,14 +3,14 @@ title: "feat: Expand Dashboards Discover And Visualization API Surface"
 type: feat
 status: completed
 date: 2026-04-30
-origin: docs/brainstorms/2026-04-30-opensearch-lite-dashboards-discover-visualization-requirements.md
+origin: docs/brainstorms/2026-04-30-mainstack-search-dashboards-discover-visualization-requirements.md
 ---
 
 # feat: Expand Dashboards Discover And Visualization API Surface
 
 ## Summary
 
-This plan expands OpenSearch Lite's deterministic API surface for the
+This plan expands mainstack-search's deterministic API surface for the
 Dashboards-shaped fixture tranche: metadata and field discovery first, then a
 shared bounded query evaluator, the first visualization aggregation subset,
 source-traceable fixture coverage, and direct durable-file inspection.
@@ -19,11 +19,11 @@ source-traceable fixture coverage, and direct durable-file inspection.
 
 ## Problem Frame
 
-OpenSearch Lite already covers core local index, document, bulk, count,
+mainstack-search already covers core local index, document, bulk, count,
 multi-get, multi-search, and scalar search behavior. The next pressure point is
 application-shaped compatibility: OpenSearch Dashboards-style clients need a
 chain of startup metadata, field capabilities, Discover searches, and
-aggregation responses to work without special OpenSearch Lite handling.
+aggregation responses to work without special mainstack-search handling.
 
 The goal here is fixture-level confidence against the pinned Dashboards 3.7.0
 signals, not a claim that a live OpenSearch Dashboards process is supported.
@@ -141,11 +141,11 @@ read, AE6 strict compatibility and security boundaries.
 
 ### Institutional Learnings
 
-- `docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md`
+- `docs/solutions/security-issues/mainstack-search-p1-code-review-hardening-2026-04-29.md`
   shows that route classification, agent fallback, bulk parsing, create
   semantics, memory admission, and durable writes are trust boundaries. This
   tranche must keep new routes explicit and avoid fallback-based proof.
-- `docs/solutions/security-issues/opensearch-lite-kubernetes-workgroup-security-2026-04-30.md`
+- `docs/solutions/security-issues/mainstack-search-kubernetes-workgroup-security-2026-04-30.md`
   shows that authorization is route-inventory based, not method based. New read
   `POST` APIs must be marked `Read` intentionally.
 
@@ -629,7 +629,7 @@ fixtures only for confirmed support.
 **Verification:**
 - The fixture dataset can drive metric panels, terms tables, time charts,
   numeric charts, filtered charts, missing buckets, and document sample tables
-  without client-side OpenSearch Lite special cases.
+  without client-side mainstack-search special cases.
 
 ---
 
@@ -886,7 +886,7 @@ accurate, bounded, and safe for future implementation work.
 
 ## Sources & References
 
-- **Origin document:** [docs/brainstorms/2026-04-30-opensearch-lite-dashboards-discover-visualization-requirements.md](docs/brainstorms/2026-04-30-opensearch-lite-dashboards-discover-visualization-requirements.md)
+- **Origin document:** [docs/brainstorms/2026-04-30-mainstack-search-dashboards-discover-visualization-requirements.md](docs/brainstorms/2026-04-30-mainstack-search-dashboards-discover-visualization-requirements.md)
 - **Gap analysis:** [docs/opensearch-dashboards-gap-analysis.md](docs/opensearch-dashboards-gap-analysis.md)
 - **Supported APIs:** [docs/supported-apis.md](docs/supported-apis.md)
 - **Compatibility:** [docs/compatibility.md](docs/compatibility.md)

@@ -1,16 +1,16 @@
 ---
-title: "feat: Build OpenSearch Lite"
+title: "feat: Build mainstack-search"
 type: feat
 status: active
 date: 2026-04-29
 origin: PLAN.md
 ---
 
-# feat: Build OpenSearch Lite
+# feat: Build mainstack-search
 
 ## Summary
 
-Build `opensearch-lite` as a greenfield Rust service with a broad recent
+Build `mainstack-search` as a greenfield Rust service with a broad recent
 OpenSearch REST compatibility shell, deterministic local implementations for
 core index/document/bulk/search workflows, JSON/JSONL-readable persistence, and
 a configured read-only OpenAI-compatible runtime agent fallback for unsupported
@@ -21,7 +21,7 @@ read requests.
 ## Problem Frame
 
 The requirements in `PLAN.md` define a broad local OpenSearch emulator rather
-than a narrow Axon-only subset. The implementation has to make route breadth
+than a narrow Mainstack-only subset. The implementation has to make route breadth
 visible early without letting shallow compatibility hide state mutation,
 resource, or data-exposure risks.
 
@@ -117,41 +117,41 @@ above.
 
 ### Relevant Code and Patterns
 
-- The sibling `cqlite-server` project is the closest local pattern: it uses an
+- The sibling `mainstack-cql` project is the closest local pattern: it uses an
   explicit Rust binary crate, conservative CLI defaults, loopback binding guard,
   low-resource limits, durable local files, ignored real-client smoke tests, and
   protocol-shaped errors.
-- The sibling `cqlite-server` config module shows the config posture to mirror:
+- The sibling `mainstack-cql` config module shows the config posture to mirror:
   parse byte units, reject impossible limits, and require explicit opt-in before
   exposing an unauthenticated local server outside loopback.
-- The sibling `cqlite-server` mutation log, storage, and row-store modules show
+- The sibling `mainstack-cql` mutation log, storage, and row-store modules show
   the local durability pattern: append a JSONL mutation record, fsync the commit
   source, use snapshots as recovery accelerators, and replay into in-memory
   state at startup.
-- The sibling `cqlite-server` real-client smoke test shows the test style:
+- The sibling `mainstack-cql` real-client smoke test shows the test style:
   start the binary on `127.0.0.1:0`, discover the bound port from stderr, run the
   client workflow, and assert a clear success marker.
 - The local OpenSearch clone's REST API spec currently contains 165 API
   definitions plus `_common.json`, with 265 path variants and 323 method/path
   combinations. The largest families are `indices`, `cat`, and `cluster`, which
   should drive the first route-tier inventory.
-- Axon Stage 1 currently relies on OpenSearch 3.6, index templates,
+- Mainstack Stage 1 currently relies on OpenSearch 3.6, index templates,
   document PUTs, and `_search` with exact filters and sorting. This validates
   early template/alias/search support, but does not bound product scope.
 
 ### Institutional Learnings
 
-- `cqlite-server` mutation-log recovery learning: the append-only log must be
+- `mainstack-cql` mutation-log recovery learning: the append-only log must be
   the durable commit source. After a successful append, snapshots should be
   best-effort recovery caches; otherwise clients can see failure for mutations
   that replay later applies.
-- `cqlite-server` protocol hardening learning: every resource limit needs config
+- `mainstack-cql` protocol hardening learning: every resource limit needs config
   validation, runtime enforcement, and a focused test proving enforcement.
-- Axon OpenSearch operator learning: recent OpenSearch 3.x brings useful
+- Mainstack OpenSearch operator learning: recent OpenSearch 3.x brings useful
   semantic/vector/agentic features, but JVM/operator startup remains a
   meaningful local-dev cost. This strengthens the case for a light local
   emulator and for recent 3.x compatibility.
-- Axon JVM memory learning: avoid inheriting production engine memory
+- Mainstack JVM memory learning: avoid inheriting production engine memory
   assumptions into local-dev dependencies; explicit memory and body limits are
   product requirements, not late hardening work.
 
@@ -226,7 +226,7 @@ responses, and fallback-eligible reads:
   use configured read-only fallback and receive actionable failure hints.
 
 These anchors guide first-release ordering without reducing the longer-term API
-coverage goal to an Axon-only or workflow-only subset.
+coverage goal to an Mainstack-only or workflow-only subset.
 
 ---
 
@@ -267,7 +267,7 @@ coverage goal to an Axon-only or workflow-only subset.
 ## Output Structure
 
 ```text
-opensearch-lite/
+mainstack-search/
   Cargo.toml
   build.rs
   src/
@@ -402,7 +402,7 @@ HTTP listener, request body admission, connection limits, and basic logging.
 - Create: `tests/http_surface.rs`
 
 **Approach:**
-- Mirror `cqlite-server`'s conservative config posture: loopback by default,
+- Mirror `mainstack-cql`'s conservative config posture: loopback by default,
   explicit non-loopback opt-in, byte-unit parsing, positive resource limits, and
   startup validation before binding.
 - Keep HTTP parsing and admission separate from API behavior so later route
@@ -414,9 +414,9 @@ HTTP listener, request body admission, connection limits, and basic logging.
 these are security and resource-control contracts.
 
 **Patterns to follow:**
-- The sibling `cqlite-server` config module for argument parsing and local-only
+- The sibling `mainstack-cql` config module for argument parsing and local-only
   bind guard.
-- The sibling `cqlite-server` server module for listener startup, connection
+- The sibling `mainstack-cql` server module for listener startup, connection
   admission, and bounded runtime errors.
 
 **Test scenarios:**
@@ -546,7 +546,7 @@ Request(method, path) -> RouteMatch(api_name, params, tier)
   implementation, but keep the helper API stable.
 
 **Patterns to follow:**
-- The sibling `cqlite-server` protocol error and message helpers for shaped
+- The sibling `mainstack-cql` protocol error and message helpers for shaped
   protocol errors and bounded error text.
 - OpenSearch root/info and error responses captured from a real 3.x container
   during parity harness work.
@@ -623,10 +623,10 @@ Request(method, path) -> RouteMatch(api_name, params, tier)
 on top of the store.
 
 **Patterns to follow:**
-- The sibling `cqlite-server` mutation log implementation for append, fsync
+- The sibling `mainstack-cql` mutation log implementation for append, fsync
   grouping, segment rotation, checkpointing, and replay tolerance for torn final
   records.
-- The sibling `cqlite-server` storage implementation for atomic snapshot writes
+- The sibling `mainstack-cql` storage implementation for atomic snapshot writes
   and directory sync discipline.
 
 **Test scenarios:**
@@ -692,7 +692,7 @@ on top of the store.
   agent fallback.
 
 **Patterns to follow:**
-- The sibling `cqlite-server` deterministic surface tests for API-level
+- The sibling `mainstack-cql` deterministic surface tests for API-level
   behavior coverage.
 - OpenSearch REST spec files for route aliases, parameter names, and supported
   methods.
@@ -900,10 +900,10 @@ fallback-specific parity cases.
 
 **Approach:**
 - Use ignored integration tests for real clients, following the
-  `cqlite-server` smoke pattern.
+  `mainstack-cql` smoke pattern.
 - Implement and run the Python/JavaScript smoke subset as soon as U6 lands, so
   deterministic core compatibility is validated before agent fallback work.
-- Run the same high-level workflow against `opensearch-lite` and a real recent
+- Run the same high-level workflow against `mainstack-search` and a real recent
   OpenSearch container: info, health, template/alias/index setup, document
   CRUD, bulk, supported search, unsupported/fallback cases, cleanup.
 - Capture request traces from clients during early implementation and convert
@@ -914,9 +914,9 @@ fallback-specific parity cases.
   fail unless the route is explicitly allowlisted for the migration check.
 
 **Patterns to follow:**
-- The sibling `cqlite-server` real-client smoke test.
-- The sibling `cqlite-server` smoke-test runner script.
-- The sibling `cqlite-server` Docker Compose setup.
+- The sibling `mainstack-cql` real-client smoke test.
+- The sibling `mainstack-cql` smoke-test runner script.
+- The sibling `mainstack-cql` Docker Compose setup.
 
 **Test scenarios:**
 - Covers AE1. Python, JavaScript, and Java clients connect and complete
@@ -953,7 +953,7 @@ fallback-specific parity cases.
 - Modify: `docs/supported-apis.md`
 - Modify: `docs/compatibility.md`
 - Modify: `docs/agent-fallback.md`
-- Create: `docker/opensearch-lite.Dockerfile`
+- Create: `docker/mainstack-search.Dockerfile`
 - Modify: `docker/docker-compose.yml`
 - Modify: `README.md`
 
@@ -982,7 +982,7 @@ fallback-specific parity cases.
 - Happy path: generated compatibility docs include all route tiers from the
   inventory.
 - Error path: docs generation fails if a route tier lacks a documentation row.
-- Integration: Compose example starts `opensearch-lite`, runs a smoke script,
+- Integration: Compose example starts `mainstack-search`, runs a smoke script,
   and exits cleanly.
 - Integration: Compose port publishing is reachable from the host while still
   requiring explicit non-loopback opt-in inside the container.
@@ -1096,10 +1096,10 @@ fallback-specific parity cases.
 ## Sources & References
 
 - **Origin document:** `PLAN.md`
-- Local durability pattern: sibling `cqlite-server` mutation log implementation.
-- Local config and resource pattern: sibling `cqlite-server` config
+- Local durability pattern: sibling `mainstack-cql` mutation log implementation.
+- Local config and resource pattern: sibling `mainstack-cql` config
   implementation.
-- Local real-client smoke pattern: sibling `cqlite-server` smoke test.
+- Local real-client smoke pattern: sibling `mainstack-cql` smoke test.
 - OpenSearch release schedule and version history:
   <https://opensearch.org/releases/>
 - OpenSearch 3.6 announcement:

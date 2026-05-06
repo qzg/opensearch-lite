@@ -22,15 +22,15 @@ infrastructure without code changes.
 
 Current local service working names:
 
-- `opensearch-lite`: Rust OpenSearch-compatible local search server.
-- `cqlite-server`: Rust Cassandra/CQL-compatible local server.
+- `mainstack-search`: Rust OpenSearch-compatible local search server.
+- `mainstack-cql`: Rust Cassandra/CQL-compatible local server.
 - `axon`: former architecture/project name for the larger runtime.
 
 ## Naming Constraints
 
 - Avoid making third-party marks the primary product name.
 - Use compatibility language for third-party systems:
-  - "OpenSearch-compatible", not "OpenSearch Lite" as a product name.
+  - "OpenSearch-compatible", not "mainstack-search" as a product name.
   - "Cassandra-compatible" or "CQL-compatible", not "Cassandra Lite".
   - "Kafka-compatible", not "Kafka Lite", if a stream service is added.
 - Keep wasmCloud named as upstream wasmCloud in notices and technical
@@ -40,18 +40,18 @@ Current local service working names:
 
 ## Key Trademark and Brand Observations
 
-### `opensearch-lite`
+### `mainstack-search`
 
-`opensearch-lite` is risky as a public name because it makes `OpenSearch` the
+`mainstack-search` is risky as a public name because it makes `OpenSearch` the
 primary product mark. A safer pattern is a distinct product name plus
 "OpenSearch-compatible local search service" as descriptive copy.
 
 Source:
 <https://opensearch.org/trademark-brand-policy/>
 
-### `cqlite-server`
+### `mainstack-cql`
 
-`cqlite-server` is safer than `cassandra-lite` because it does not use
+`mainstack-cql` is safer than `cassandra-lite` because it does not use
 `Cassandra` as the primary mark. It still needs clear descriptive copy:
 "Cassandra-compatible CQL/native-protocol server for local development."
 
@@ -87,9 +87,9 @@ actual product name when referencing compatibility.
 Source:
 <https://www.ibm.com/legal/copyright-trademark>
 
-### `Axon`
+### `Mainstack`
 
-`Axon` was rejected as a public product/architecture name because `Axon
+`Mainstack` was rejected as a public product/architecture name because `Mainstack
 Framework` already exists in the adjacent event-driven/CQRS/event-sourcing
 space, creating avoidable confusion.
 
@@ -100,9 +100,9 @@ Source:
 
 ### Rejected or Lower-Priority
 
-- `OpenSearch Lite`: third-party mark as product name.
+- `mainstack-search`: third-party mark as product name.
 - `Cassandra Lite`: third-party mark as product name.
-- `Axon`: adjacent collision with Axon Framework and other Axon marks.
+- `Mainstack`: adjacent collision with Mainstack Framework and other Mainstack marks.
 - `AIBM`: awkward and too directly modifies/embeds IBM.
 - `Qascade`, `Qonduit`, `Qyra`, `Kyra`, `Qivra`, `Qendra`, `Runplane`,
   `TruePlane`, `Baseplane`: quick collision scans found adjacent software,

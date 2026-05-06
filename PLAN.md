@@ -1,14 +1,14 @@
 ---
 date: 2026-04-29
-topic: opensearch-lite-agentic-local-opensearch
+topic: mainstack-search-agentic-local-opensearch
 status: requirements
 ---
 
-# OpenSearch Lite Requirements
+# mainstack-search Requirements
 
 ## Summary
 
-`opensearch-lite` will be a local-only, Rust-based, recent-OpenSearch-compatible
+`mainstack-search` will be a local-only, Rust-based, recent-OpenSearch-compatible
 development server with a broad REST API shell, real behavior for core local
 workflows, best-effort responses where exact behavior is not practical, and an
 optional read-only runtime agent fallback for unsupported read requests.
@@ -47,16 +47,16 @@ OpenSearch in production or in a heavier local stack.
 - The prior draft was too narrow in treating the MVP as a small API subset. The
   revised goal is broad route coverage for recent OpenSearch APIs, with behavior
   classified by compatibility tier.
-- The local Axon architecture is an important downstream validation target, but
-  it should not define the product boundary. `opensearch-lite` should support
-  much more than Axon currently exercises.
+- The local Mainstack architecture is an important downstream validation target, but
+  it should not define the product boundary. `mainstack-search` should support
+  much more than Mainstack currently exercises.
 - The current OpenSearch release page lists OpenSearch 3.6.0 as released on
   2026-04-07. Recent 3.x behavior should be the primary compatibility anchor,
   with the advertised local version configurable.
-- Axon currently uses OpenSearch 3.6 as a projection engine and relies on
+- Mainstack currently uses OpenSearch 3.6 as a projection engine and relies on
   OpenSearch index templates, exact-match keyword fields, document PUTs, and
   query-router search requests. That is evidence that templates and recent
-  search behavior matter early, even though Axon is not the full scope.
+  search behavior matter early, even though Mainstack is not the full scope.
 
 ---
 
@@ -73,7 +73,7 @@ OpenSearch in production or in a heavier local stack.
   endpoint that can synthesize read-only responses from local context.
 - A5. Maintainer: owns the compatibility matrix, route tiers, tests, and
   guardrails that keep broad support from becoming misleading.
-- A6. Development-bundle integrator: packages `opensearch-lite` with local
+- A6. Development-bundle integrator: packages `mainstack-search` with local
   Cassandra-like services and needs an easy migration path to real OpenSearch.
 
 ---
@@ -128,7 +128,7 @@ OpenSearch in production or in a heavier local stack.
   - **Covered by:** R11, R12, R22, R23, R25, R26
 
 - F5. Migration to real OpenSearch
-  - **Trigger:** A project outgrows `opensearch-lite` or moves to production.
+  - **Trigger:** A project outgrows `mainstack-search` or moves to production.
   - **Actors:** A1, A2, A6
   - **Steps:** The developer changes endpoint configuration to a real recent
     OpenSearch cluster and uses the compatibility matrix to identify any local
@@ -264,7 +264,7 @@ flowchart TD
 
 - R33. Compatibility must be tested with real clients, starting with Python,
   JavaScript, and Java clients, plus direct HTTP smoke tests.
-- R34. A shared smoke suite must run against both `opensearch-lite` and a real
+- R34. A shared smoke suite must run against both `mainstack-search` and a real
   recent OpenSearch 3.x container, with documented accepted divergences.
 - R35. Route inventory tests must prevent known recent OpenSearch routes from
   disappearing from the compatibility matrix.
@@ -329,7 +329,7 @@ flowchart TD
 - Local data remains agent-readable on disk, and the server remains bounded for
   development-scale data sets, typically below 2 GB and with an intended ceiling
   around 10 GB.
-- A project can move from `opensearch-lite` to real recent OpenSearch by
+- A project can move from `mainstack-search` to real recent OpenSearch by
   changing endpoint configuration, provided it stays within the documented
   behavior or resolves listed divergences.
 
@@ -382,9 +382,9 @@ flowchart TD
 - Configured agent endpoints are trusted: if users configure cloud fallback,
   full relevant read context may leave the process, and that trust decision must
   be explicit in docs and logs.
-- Axon validates direction but does not limit scope: current Axon OpenSearch
+- Mainstack validates direction but does not limit scope: current Mainstack OpenSearch
   usage proves templates, search, and local memory pressure matter, but the API
-  target is broader than Axon Stage 1.
+  target is broader than Mainstack Stage 1.
 - JSON/JSONL storage remains core product identity: readable local files are a
   feature for coding agents and developers, not only an implementation shortcut.
 

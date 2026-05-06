@@ -1,13 +1,13 @@
 ---
 date: 2026-04-30
-topic: opensearch-lite-dashboards-discover-visualization
+topic: mainstack-search-dashboards-discover-visualization
 ---
 
-# OpenSearch Lite Dashboards Discover And Visualization API Expansion
+# mainstack-search Dashboards Discover And Visualization API Expansion
 
 ## Summary
 
-OpenSearch Lite will expand its deterministic API surface enough to support
+mainstack-search will expand its deterministic API surface enough to support
 basic OpenSearch Dashboards-style data exploration: data import, data view
 creation, Discover searches, and simple aggregation-backed visualizations. The
 first proof will be Rust/API fixtures traceable to the OpenSearch Dashboards
@@ -23,7 +23,7 @@ OpenSearch Dashboards support until that separate smoke passes.
 
 ## Problem Frame
 
-OpenSearch Lite already covers core local index, document, bulk, scalar search,
+mainstack-search already covers core local index, document, bulk, scalar search,
 and secured workgroup workflows. The next compatibility pressure comes from the
 Dashboards source-backed gap analysis: OpenSearch Dashboards exercises
 OpenSearch as an application substrate rather than as isolated client calls, and
@@ -32,7 +32,7 @@ APIs that are still missing or too generic.
 
 Dashboards depends on a chain of behavior: it must inspect cluster metadata,
 create or use indices, infer fields for a data view, run Discover-style searches,
-and request aggregation shapes used by simple visualizations. If OpenSearch Lite
+and request aggregation shapes used by simple visualizations. If mainstack-search
 only implements individual APIs without validating that chain, planning can
 over-prioritize isolated route count and under-prioritize the workflows that
 real local developers will actually use.
@@ -57,7 +57,7 @@ flowchart TB
 
 ## Actors
 
-- A1. Application developer: Uses OpenSearch Lite as the local OpenSearch
+- A1. Application developer: Uses mainstack-search as the local OpenSearch
   endpoint while building or testing a Dashboards-like exploration workflow.
 - A2. Coding agent: Runs compatibility tests, reads local durable files, and
   uses diagnostics to explain gaps or failures.
@@ -151,10 +151,10 @@ flowchart TB
 
 **Data view prerequisites**
 
-- R4. OpenSearch Lite must expose index-existence behavior under the appropriate
+- R4. mainstack-search must expose index-existence behavior under the appropriate
   OpenSearch API identity so clients and route inventory checks can distinguish
   index lookup from index existence.
-- R5. OpenSearch Lite must provide deterministic field-capability responses for
+- R5. mainstack-search must provide deterministic field-capability responses for
   stored local data, including field names, inferred or mapped field types, and
   basic searchable/aggregatable flags. Both `GET` and `POST` forms of
   `/_field_caps` and `/{index}/_field_caps` must classify as read APIs and must
@@ -189,7 +189,7 @@ flowchart TB
   simple visualizations, but it does not need distributed Lucene/OpenSearch
   parity.
 - R12. Aggregation responses must be OpenSearch-shaped enough for client code to
-  consume nested bucket and metric results without special OpenSearch Lite
+  consume nested bucket and metric results without special mainstack-search
   handling.
 
 **Persistence and agent readability**

@@ -13,8 +13,8 @@ pub fn authorize(request: &Request, route: &RouteMatch) -> Result<(), Response> 
     if route.tier == Tier::AgentRead && control_like_path(&request.path) {
         return Err(open_search_error(
             501,
-            "opensearch_lite_unsupported_api_exception",
-            format!("OpenSearch Lite does not implement [{}] yet", route.api_name),
+            "mainstack_search_unsupported_api_exception",
+            format!("mainstack-search does not implement [{}] yet", route.api_name),
             Some("Use a supported local API or test this security/control API against real OpenSearch."),
         ));
     }
@@ -30,7 +30,7 @@ pub fn authorize(request: &Request, route: &RouteMatch) -> Result<(), Response> 
 
     Err(open_search_error(
         403,
-        "opensearch_lite_authorization_exception",
+        "mainstack_search_authorization_exception",
         format!(
             "role does not permit [{}] access to [{}]",
             route.access.as_str(),

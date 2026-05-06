@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${OPENSEARCH_LITE_JAVA_SMOKE_PORT:-19205}"
-SECURE_SMOKE="${OPENSEARCH_LITE_SECURE_SMOKE:-0}"
+PORT="${MAINSTACK_SEARCH_JAVA_SMOKE_PORT:-19205}"
+SECURE_SMOKE="${MAINSTACK_SEARCH_SECURE_SMOKE:-0}"
 if [[ -n "${OPENSEARCH_URL:-}" ]]; then
   URL="${OPENSEARCH_URL}"
 elif [[ "${SECURE_SMOKE}" == "1" ]]; then
@@ -40,7 +40,7 @@ if [[ -z "${OPENSEARCH_URL:-}" && "${SECURE_SMOKE}" == "1" ]]; then
     echo "openssl is required for secure local smoke fixtures" >&2
     exit 2
   fi
-  SECURITY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/opensearch-lite-java-security.XXXXXX")"
+  SECURITY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mainstack-search-java-security.XXXXXX")"
   openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
     -subj "/CN=localhost" \
     -addext "subjectAltName=DNS:localhost,DNS:host.docker.internal,IP:127.0.0.1" \
@@ -51,7 +51,7 @@ if [[ -z "${OPENSEARCH_URL:-}" && "${SECURE_SMOKE}" == "1" ]]; then
 JSON
   export OPENSEARCH_CA_CERT="${SECURITY_DIR}/cert.pem"
   export OPENSEARCH_USERNAME="smoke"
-  export OPENSEARCH_PASSWORD="opensearch-lite-smoke-password"
+  export OPENSEARCH_PASSWORD="mainstack-search-smoke-password"
 fi
 
 if [[ -z "${OPENSEARCH_URL:-}" ]]; then
@@ -72,7 +72,7 @@ if [[ -z "${OPENSEARCH_URL:-}" ]]; then
   cargo run --manifest-path "${ROOT_DIR}/Cargo.toml" -- \
     --listen "${LISTEN_ADDR}" \
     --ephemeral \
-    "${EXTRA_SERVER_ARGS[@]}" >"${TMPDIR:-/tmp}/opensearch-lite-java-smoke.log" 2>&1 &
+    "${EXTRA_SERVER_ARGS[@]}" >"${TMPDIR:-/tmp}/mainstack-search-java-smoke.log" 2>&1 &
   SERVER_PID="$!"
 
   for _ in $(seq 1 80); do
@@ -110,15 +110,15 @@ elif command -v docker >/dev/null 2>&1; then
     DOCKER_ARGS+=(-e "OPENSEARCH_PASSWORD=${OPENSEARCH_PASSWORD}")
   fi
   if [[ -n "${OPENSEARCH_CA_CERT:-}" ]]; then
-    DOCKER_ARGS+=(-e "OPENSEARCH_CA_CERT=/run/opensearch-lite/ca.pem" -v "${OPENSEARCH_CA_CERT}:/run/opensearch-lite/ca.pem:ro")
+    DOCKER_ARGS+=(-e "OPENSEARCH_CA_CERT=/run/mainstack-search/ca.pem" -v "${OPENSEARCH_CA_CERT}:/run/mainstack-search/ca.pem:ro")
   fi
   if [[ -n "${OPENSEARCH_VERIFY_CERTS:-}" ]]; then
     DOCKER_ARGS+=(-e "OPENSEARCH_VERIFY_CERTS=${OPENSEARCH_VERIFY_CERTS}")
   fi
-  docker build -q -t opensearch-lite-java-smoke "${ROOT_DIR}/docker/java-smoke" >/dev/null
+  docker build -q -t mainstack-search-java-smoke "${ROOT_DIR}/docker/java-smoke" >/dev/null
   docker run "${DOCKER_ARGS[@]}" \
     ${OPENSEARCH_JAVA_CLIENT_VERSION:+-e "OPENSEARCH_JAVA_CLIENT_VERSION=${OPENSEARCH_JAVA_CLIENT_VERSION}"} \
-    opensearch-lite-java-smoke
+    mainstack-search-java-smoke
 else
   echo "mvn or docker is required for the Java smoke" >&2
   exit 2

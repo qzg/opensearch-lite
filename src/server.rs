@@ -91,7 +91,7 @@ pub fn validate_config(config: &Config) -> io::Result<()> {
     validate_startup_config(config)?;
     let diagnostics = resources::validate(config)?;
     eprintln!(
-        "opensearch-lite resource diagnostics: {}",
+        "mainstack-search resource diagnostics: {}",
         diagnostics.summary()
     );
     security::diagnostics::validate(config)
@@ -126,7 +126,7 @@ fn validate_state_security(config: &Config) -> io::Result<()> {
 
 fn startup_log(config: &Config, bound_addr: std::net::SocketAddr) {
     eprintln!(
-        "opensearch-lite listening on {bound_addr} (OpenSearch {} compatible, security {}, agent fallback {})",
+        "mainstack-search listening on {bound_addr} (OpenSearch {} compatible, security {}, agent fallback {})",
         config.advertised_version,
         if config.security.users_file.is_some() {
             "secured"

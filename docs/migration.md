@@ -1,11 +1,11 @@
 # Migration To Real OpenSearch
 
-OpenSearch Lite is intended for local development. Production and high-fidelity
+mainstack-search is intended for local development. Production and high-fidelity
 local testing should use real OpenSearch.
 
 ## Before Switching
 
-1. Run the application against OpenSearch Lite with `--strict-compatibility`.
+1. Run the application against mainstack-search with `--strict-compatibility`.
 2. Add only deliberate best-effort or fallback routes to `--strict-allowlist`.
 3. Run the parity smoke script against real OpenSearch.
 4. Review `docs/supported-apis.md` for local approximations.

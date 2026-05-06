@@ -75,7 +75,7 @@ fn basic_credentials(headers: &HeaderMap) -> Result<BasicCredentials, Response> 
     let Some(value) = values.next() else {
         return Err(authentication_error(
             "missing Authorization header",
-            Some("Send HTTP Basic credentials for secured OpenSearch Lite."),
+            Some("Send HTTP Basic credentials for secured mainstack-search."),
         ));
     };
     if values.next().is_some() {
@@ -129,5 +129,5 @@ fn basic_credentials(headers: &HeaderMap) -> Result<BasicCredentials, Response> 
 
 pub fn authentication_error(reason: &str, hint: Option<&str>) -> Response {
     open_search_error(401, "security_exception", reason, hint)
-        .header("www-authenticate", "Basic realm=\"opensearch-lite\"")
+        .header("www-authenticate", "Basic realm=\"mainstack-search\"")
 }

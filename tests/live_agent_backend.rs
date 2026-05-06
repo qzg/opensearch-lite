@@ -4,7 +4,7 @@ use std::{env, time::Duration};
 
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Uri};
-use opensearch_lite::{
+use mainstack_search::{
     agent::{
         benchmark::{
             fixture_context, grade_agent_output, load_fixtures, FixtureCheck, FixtureGrade,
@@ -41,7 +41,7 @@ async fn live_deepseek_backend_satisfies_read_wrapper_contract() {
         api_name: "unknown.read".to_string(),
         route_tier: "agent_fallback_eligible".to_string(),
         catalog: json!({
-            "local_runtime": "OpenSearch Lite",
+            "local_runtime": "mainstack-search",
             "expected_behavior": "Return a valid read-only OpenSearch-compatible JSON wrapper."
         }),
         tools: tool_catalog("unknown.read", false),
@@ -118,7 +118,7 @@ async fn live_deepseek_backend_satisfies_agent_fallback_fixture_contracts() {
 
 async fn complete_and_grade_fixture(
     client: &AgentClient,
-    fixture: &opensearch_lite::agent::benchmark::BenchmarkFixture,
+    fixture: &mainstack_search::agent::benchmark::BenchmarkFixture,
 ) -> FixtureGrade {
     let mut last_error = None;
     for attempt in 1..=3 {
@@ -162,10 +162,10 @@ fn is_retryable_agent_error(reason: &str) -> bool {
 }
 
 fn live_agent_tests_enabled() -> bool {
-    if env::var("OPENSEARCH_LITE_LIVE_AGENT_TEST").ok().as_deref() == Some("1") {
+    if env::var("MAINSTACK_SEARCH_LIVE_AGENT_TEST").ok().as_deref() == Some("1") {
         return true;
     }
-    eprintln!("skipping live agent backend test; set OPENSEARCH_LITE_LIVE_AGENT_TEST=1");
+    eprintln!("skipping live agent backend test; set MAINSTACK_SEARCH_LIVE_AGENT_TEST=1");
     false
 }
 
@@ -189,15 +189,15 @@ fn live_agent_config(write_enabled: bool) -> Config {
     let mut config = Config::default();
     config.ephemeral = true;
     config.agent.endpoint = Some(
-        env::var("OPENSEARCH_LITE_AGENT_ENDPOINT")
+        env::var("MAINSTACK_SEARCH_AGENT_ENDPOINT")
             .unwrap_or_else(|_| DEFAULT_OPENROUTER_ENDPOINT.to_string()),
     );
     config.agent.model = Some(
-        env::var("OPENSEARCH_LITE_AGENT_MODEL")
+        env::var("MAINSTACK_SEARCH_AGENT_MODEL")
             .unwrap_or_else(|_| DEFAULT_DEEPSEEK_MODEL.to_string()),
     );
     config.agent.bearer_token_env = Some(
-        env::var("OPENSEARCH_LITE_AGENT_TOKEN_ENV")
+        env::var("MAINSTACK_SEARCH_AGENT_TOKEN_ENV")
             .unwrap_or_else(|_| "OPENROUTER_API_KEY".to_string()),
     );
     config.agent.timeout = Duration::from_secs(30);
@@ -214,7 +214,7 @@ async fn call(
     method: Method,
     path: &str,
     body: Value,
-) -> opensearch_lite::responses::Response {
+) -> mainstack_search::responses::Response {
     let body = if body.is_null() {
         Bytes::new()
     } else {
@@ -233,7 +233,7 @@ async fn call_with_live_retries(
     method: Method,
     path: &str,
     body: Value,
-) -> opensearch_lite::responses::Response {
+) -> mainstack_search::responses::Response {
     let mut response = call(state, method.clone(), path, body.clone()).await;
     for attempt in 1..=3 {
         if !is_retryable_agent_provider_failure(&response) || attempt == 3 {
@@ -245,7 +245,7 @@ async fn call_with_live_retries(
     response
 }
 
-fn is_retryable_agent_provider_failure(response: &opensearch_lite::responses::Response) -> bool {
+fn is_retryable_agent_provider_failure(response: &mainstack_search::responses::Response) -> bool {
     let Some(reason) = response
         .body
         .as_ref()

@@ -105,7 +105,7 @@ impl HttpAgentClient {
         }
 
         let body = serde_json::json!({
-            "model": self.config.model.as_deref().unwrap_or("opensearch-lite-fallback"),
+            "model": self.config.model.as_deref().unwrap_or("mainstack-search-fallback"),
             "messages": prompt::messages(&context),
             "temperature": 0,
             "max_tokens": 1600,

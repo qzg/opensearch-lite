@@ -239,7 +239,7 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
 
     open_search_error(
         404,
-        "opensearch_lite_route_exception",
+        "mainstack_search_route_exception",
         format!("implemented route [{api_name}] did not match a handler"),
         Some("Use a documented OpenSearch REST path or check docs/supported-apis.md."),
     )
@@ -279,7 +279,7 @@ fn handle_best_effort(state: AppState, request: Request, api_name: &str) -> Resp
                 json!([{
                     "epoch": "0",
                     "timestamp": "00:00:00",
-                    "cluster": "opensearch-lite",
+                    "cluster": "mainstack-search",
                     "status": "green",
                     "node.total": "1",
                     "node.data": "1"
@@ -305,7 +305,7 @@ fn handle_mocked(request: Request, api_name: &str) -> Response {
                         .collect::<Vec<_>>(),
                 ),
                 None => (
-                    "opensearch_lite_local".to_string(),
+                    "mainstack_search_local".to_string(),
                     vec!["admin".to_string()],
                 ),
             };
@@ -339,8 +339,8 @@ fn handle_mocked(request: Request, api_name: &str) -> Response {
                 "current_state": "started",
                 "can_remain_on_current_node": "yes",
                 "can_rebalance_cluster": "no",
-                "rebalance_explanation": "OpenSearch Lite runs as a single local node; shard allocation is not modeled.",
-                "opensearch_lite": mocked_note(api_name)
+                "rebalance_explanation": "mainstack-search runs as a single local node; shard allocation is not modeled.",
+                "mainstack_search": mocked_note(api_name)
             }),
         )
         .compatibility_signal(api_name, "mocked"),
@@ -376,7 +376,7 @@ fn handle_mocked(request: Request, api_name: &str) -> Response {
                     "acknowledged": true,
                     "persistent": persistent,
                     "transient": transient,
-                    "opensearch_lite": mocked_note(api_name)
+                    "mainstack_search": mocked_note(api_name)
                 }),
             )
             .compatibility_signal(api_name, "mocked")
@@ -395,7 +395,7 @@ fn handle_mocked(request: Request, api_name: &str) -> Response {
                 },
                 "acknowledged": true,
                 "shards_acknowledged": true,
-                "opensearch_lite": mocked_note(api_name)
+                "mainstack_search": mocked_note(api_name)
             }),
         )
         .compatibility_signal(api_name, "mocked"),
@@ -404,7 +404,7 @@ fn handle_mocked(request: Request, api_name: &str) -> Response {
                 200,
                 json!({
                     "nodes": {},
-                    "opensearch_lite": mocked_note(api_name)
+                    "mainstack_search": mocked_note(api_name)
                 }),
             )
             .compatibility_signal(api_name, "mocked")
@@ -413,7 +413,7 @@ fn handle_mocked(request: Request, api_name: &str) -> Response {
             200,
             json!({
                 "acknowledged": true,
-                "opensearch_lite": mocked_note(api_name)
+                "mainstack_search": mocked_note(api_name)
             }),
         )
         .compatibility_signal(api_name, "mocked"),
@@ -424,7 +424,7 @@ fn mocked_note(api_name: &str) -> Value {
     json!({
         "tier": "mocked",
         "api": api_name,
-        "reason": "This API is a benign local no-op in OpenSearch Lite's single-node development runtime.",
+        "reason": "This API is a benign local no-op in mainstack-search's single-node development runtime.",
         "next_step": "If this behavior matters for your application, test against full OpenSearch locally, server-hosted OpenSearch, or cloud-hosted OpenSearch."
     })
 }
@@ -1114,7 +1114,7 @@ fn handle_field_caps(state: &AppState, request: &Request, first: Option<&str>) -
             return open_search_error(
                 400,
                 "x_content_parse_exception",
-                "field_caps request body is not supported by OpenSearch Lite yet",
+                "field_caps request body is not supported by mainstack-search yet",
                 Some("Move field selection to the fields query parameter, or retry without index_filter."),
             );
         }
@@ -1233,7 +1233,7 @@ fn handle_validate_query(state: &AppState, request: &Request, first: Option<&str
         body["explanations"] = json!([{
             "index": indices.first().cloned().unwrap_or_else(|| "_all".to_string()),
             "valid": true,
-            "explanation": "query is valid for OpenSearch Lite's local evaluator"
+            "explanation": "query is valid for mainstack-search's local evaluator"
         }]);
     }
     Response::json(200, body)
@@ -1256,7 +1256,7 @@ fn handle_analyze(request: &Request) -> Response {
         return open_search_error(
             400,
             "illegal_argument_exception",
-            format!("analyzer [{analyzer}] is not supported by OpenSearch Lite"),
+            format!("analyzer [{analyzer}] is not supported by mainstack-search"),
             Some("Use standard/default/simple/whitespace/keyword for local analysis, or test analyzer-specific behavior against full OpenSearch."),
         );
     }
@@ -1337,7 +1337,7 @@ fn handle_explain(state: &AppState, request: &Request, index: &str, id: &str) ->
                 "matched": matched,
                 "explanation": {
                     "value": if matched { 1.0 } else { 0.0 },
-                    "description": "OpenSearch Lite local evaluator match result",
+                    "description": "mainstack-search local evaluator match result",
                     "details": []
                 }
             }),
@@ -2060,8 +2060,8 @@ fn parse_update_body(body: &Value) -> StoreResult<ParsedUpdateBody> {
     if object.contains_key("script") {
         return Err(StoreError::new(
             501,
-            "opensearch_lite_unsupported_api_exception",
-            "OpenSearch Lite does not implement [update.script] yet",
+            "mainstack_search_unsupported_api_exception",
+            "mainstack-search does not implement [update.script] yet",
         ));
     }
     let doc = object
@@ -2414,7 +2414,7 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
             400,
             error_type,
             error,
-            Some("Use a narrower query for OpenSearch Lite or raise the relevant local limit."),
+            Some("Use a narrower query for mainstack-search or raise the relevant local limit."),
         );
     }
     if scroll_requested && size > MAX_SCROLL_RETAINED_HITS {
@@ -2424,7 +2424,7 @@ fn handle_search(state: &AppState, request: &Request, path_index: Option<&str>) 
             format!(
                 "scroll page size [{size}] exceeds the local scroll page limit [{MAX_SCROLL_RETAINED_HITS}]"
             ),
-            Some("Use a smaller scroll size for OpenSearch Lite."),
+            Some("Use a smaller scroll size for mainstack-search."),
         );
     }
     let indices = path_indices(path_index, "_search");
@@ -2643,7 +2643,7 @@ fn handle_count(state: &AppState, request: &Request, path_index: Option<&str>) -
             400,
             error_type,
             error,
-            Some("Use a narrower query for OpenSearch Lite."),
+            Some("Use a narrower query for mainstack-search."),
         );
     }
     let indices = path_indices(path_index, "_count");
@@ -2746,7 +2746,7 @@ async fn handle_update_by_query(
         return open_search_error(
             400,
             "script_exception",
-            "update_by_query requires a supported script in OpenSearch Lite",
+            "update_by_query requires a supported script in mainstack-search",
             Some("Use delete_by_query for pure deletes, or use the saved-object namespace/workspace removal script shape."),
         );
     };
@@ -2994,8 +2994,8 @@ fn handle_msearch(state: &AppState, request: &Request, path_index: Option<&str>)
         if body.get("pit").is_some() || body.get("search_after").is_some() {
             responses.push(json!({
                 "error": {
-                    "type": "opensearch_lite_unsupported_api_exception",
-                    "reason": "msearch with PIT or search_after is not implemented by OpenSearch Lite yet"
+                    "type": "mainstack_search_unsupported_api_exception",
+                    "reason": "msearch with PIT or search_after is not implemented by mainstack-search yet"
                 },
                 "status": 501
             }));
@@ -3158,7 +3158,7 @@ fn validate_query_only(state: &AppState, body_len: usize, query: &Value) -> Resu
             400,
             search_validation_error_type(&error),
             error,
-            Some("Use a narrower query for OpenSearch Lite."),
+            Some("Use a narrower query for mainstack-search."),
         )
     })
 }
@@ -3280,7 +3280,7 @@ fn parse_saved_object_update_script(script: &Value) -> StoreResult<SavedObjectLi
     Err(StoreError::new(
         400,
         "script_exception",
-        "unsupported update_by_query script for OpenSearch Lite",
+        "unsupported update_by_query script for mainstack-search",
     ))
 }
 
@@ -3463,7 +3463,7 @@ fn reindex_document_id(doc: &MatchedDoc, script: Option<&Value>) -> StoreResult<
     Err(StoreError::new(
         400,
         "script_exception",
-        "unsupported reindex script for OpenSearch Lite",
+        "unsupported reindex script for mainstack-search",
     ))
 }
 
@@ -3522,7 +3522,7 @@ fn cat_indices(state: &AppState, request: &Request, api_name: &str) -> Response 
                     "health": "green",
                     "status": "open",
                     "index": index.name,
-                    "uuid": format!("opensearch-lite-{}", index.name),
+                    "uuid": format!("mainstack-search-{}", index.name),
                     "pri": index_setting_u64(index, "number_of_shards", 1).to_string(),
                     "rep": index_setting_u64(index, "number_of_replicas", 0).to_string(),
                     "docs.count": index.documents.len().to_string(),
@@ -3665,8 +3665,8 @@ fn cluster_stats_response(db: &Database) -> Value {
     let shard_count = db.indexes.values().map(index_total_shards).sum::<u64>();
 
     json!({
-        "cluster_name": "opensearch-lite",
-        "cluster_uuid": format!("opensearch-lite-{:x}", db.indexes.len()),
+        "cluster_name": "mainstack-search",
+        "cluster_uuid": format!("mainstack-search-{:x}", db.indexes.len()),
         "timestamp": 0u64,
         "status": "green",
         "indices": {
@@ -3691,7 +3691,7 @@ fn cluster_stats_response(db: &Database) -> Value {
                 "data": 1,
                 "ingest": 1
             },
-            "versions": ["opensearch-lite"],
+            "versions": ["mainstack-search"],
             "os": {},
             "process": {},
             "jvm": {},
@@ -3725,7 +3725,7 @@ fn index_stats(db: &Database, requested: &[String], metrics: &[StatsMetric]) -> 
         indices.insert(
             name.clone(),
             json!({
-                "uuid": format!("opensearch-lite-{name}"),
+                "uuid": format!("mainstack-search-{name}"),
                 "health": "green",
                 "status": "open",
                 "primaries": stats,
@@ -4781,7 +4781,7 @@ fn strict_guard(state: &AppState, route: &api_spec::RouteMatch) -> Option<Respon
     }
     Some(open_search_error(
         501,
-        "opensearch_lite_strict_compatibility_exception",
+        "mainstack_search_strict_compatibility_exception",
         format!(
             "route [{}] is tier [{}] and strict compatibility mode is enabled",
             route.api_name,
@@ -4794,8 +4794,8 @@ fn strict_guard(state: &AppState, route: &api_spec::RouteMatch) -> Option<Respon
 fn unsupported(api_name: &str) -> Response {
     open_search_error(
         501,
-        "opensearch_lite_unsupported_api_exception",
-        format!("OpenSearch Lite does not implement [{api_name}] yet"),
+        "mainstack_search_unsupported_api_exception",
+        format!("mainstack-search does not implement [{api_name}] yet"),
         Some("Use an implemented API, simplify the request, use a mocked local no-op API where safe, or configure agent fallback for eligible routes."),
     )
 }
@@ -4803,8 +4803,8 @@ fn unsupported(api_name: &str) -> Response {
 fn write_fallback_disabled(api_name: &str) -> Response {
     open_search_error(
         501,
-        "opensearch_lite_agent_write_fallback_disabled_exception",
-        format!("OpenSearch Lite can only handle [{api_name}] through write-enabled agent fallback, which is not enabled"),
+        "mainstack_search_agent_write_fallback_disabled_exception",
+        format!("mainstack-search can only handle [{api_name}] through write-enabled agent fallback, which is not enabled"),
         Some("Enable write fallback only for trusted local development, or use full OpenSearch locally, server-hosted OpenSearch, or cloud-hosted OpenSearch for this API family."),
     )
 }

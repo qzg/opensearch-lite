@@ -3,7 +3,7 @@ title: "feat: Add Kubernetes Workgroup Security"
 type: feat
 status: completed
 date: 2026-04-30
-origin: docs/brainstorms/2026-04-29-opensearch-lite-kubernetes-workgroup-security-requirements.md
+origin: docs/brainstorms/2026-04-29-mainstack-search-kubernetes-workgroup-security-requirements.md
 ---
 
 # feat: Add Kubernetes Workgroup Security
@@ -20,7 +20,7 @@ insecure exception is configured.
 
 ## Problem Frame
 
-OpenSearch Lite currently defaults to safe loopback binding, but container and
+mainstack-search currently defaults to safe loopback binding, but container and
 Kubernetes deployments normally bind inside the container to a non-loopback
 address. The next implementation tranche needs to make that deployment shape
 secure by default without losing the simple local developer flow or client
@@ -164,7 +164,7 @@ fallback not invoked for unauthenticated or unauthorized requests.
 
 ### Institutional Learnings
 
-- `docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md`
+- `docs/solutions/security-issues/mainstack-search-p1-code-review-hardening-2026-04-29.md`
   says route classification and agent fallback are security boundaries. Known
   mutating routes must fail closed before fallback, and fallback context must be
   tightly scoped.
@@ -245,7 +245,7 @@ fallback not invoked for unauthenticated or unauthorized requests.
   material. This is a product requirement for coding-agent repair loops.
 - Require in-process security for first-tranche workgroup deployments: ingress,
   front proxy, and service mesh deployments may add controls, but they do not
-  replace OpenSearch Lite TLS/auth in this plan.
+  replace mainstack-search TLS/auth in this plan.
 
 ---
 
@@ -643,7 +643,7 @@ or during authorization failures.
 **Patterns to follow:**
 - `src/api_spec/mod.rs` route-tier classification and method-aware route
   matching.
-- `docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md`
+- `docs/solutions/security-issues/mainstack-search-p1-code-review-hardening-2026-04-29.md`
   guidance that unsupported write/control routes fail closed before fallback.
 
 **Test scenarios:**
@@ -748,7 +748,7 @@ AE7.
 **Files:**
 - Modify: `docker/docker-compose.yml`
 - Create: `docker/docker-compose.secure.yml`
-- Modify: `docker/opensearch-lite.Dockerfile`
+- Modify: `docker/mainstack-search.Dockerfile`
 - Create: `docs/security.md`
 - Create: `docs/kubernetes-security.md`
 - Modify: `README.md`
@@ -761,7 +761,7 @@ AE7.
 - Add Kubernetes manifests or snippets that use Secret volume mounts for TLS
   and auth material and show the expected readiness/validation posture.
 - State that ingress, front-proxy, and service-mesh deployments still run
-  OpenSearch Lite with in-process TLS/auth in this tranche. They may add
+  mainstack-search with in-process TLS/auth in this tranche. They may add
   NetworkPolicy, Service, or Ingress controls, but they must not rely on the
   explicit insecure exception for workgroup deployments.
 - Document readiness/liveness posture that avoids credentials in manifests,
@@ -800,7 +800,7 @@ AE7.
 - U7. **Secured Official-Client Smokes**
 
 **Goal:** Prove that Python, JavaScript, and Java OpenSearch clients can connect
-to secured OpenSearch Lite with HTTPS, Basic auth, and CA trust.
+to secured mainstack-search with HTTPS, Basic auth, and CA trust.
 
 **Requirements:** R6, R8, R10, R14, R17, R20; F2; AE4, AE5.
 
@@ -815,7 +815,7 @@ to secured OpenSearch Lite with HTTPS, Basic auth, and CA trust.
 - Modify: `tests/java_client_smoke.rs`
 - Test: `tests/tls_surface.rs`
 - Test: `tests/security_surface.rs`
-- Modify: `docker/java-smoke/src/main/java/local/opensearchlite/Smoke.java`
+- Modify: `docker/java-smoke/src/main/java/local/mainstacksearch/Smoke.java`
 - Modify: `docker/java-smoke/pom.xml`
 - Modify: `docs/driver-examples.md`
 
@@ -843,7 +843,7 @@ fixture pattern for the other clients.
 **Patterns to follow:**
 - Existing smoke scripts own dependency installation and optional externally
   supplied `OPENSEARCH_URL`.
-- `docker/java-smoke/src/main/java/local/opensearchlite/Smoke.java` already
+- `docker/java-smoke/src/main/java/local/mainstacksearch/Smoke.java` already
   proves official Java client API calls against the local endpoint.
 
 **Test scenarios:**
@@ -858,7 +858,7 @@ fixture pattern for the other clients.
   invalid-credential proof.
 - Edge case: unsecured loopback smoke mode still works for local development.
 - Integration: secured smoke scripts continue to work when targeting an
-  externally supplied secured OpenSearch Lite URL and credentials.
+  externally supplied secured mainstack-search URL and credentials.
 
 **Verification:**
 - Non-ignored Rust integration tests prove HTTPS/auth/CA behavior in normal CI,
@@ -1083,11 +1083,11 @@ flowchart TB
 ## Sources & References
 
 - Origin document:
-  `docs/brainstorms/2026-04-29-opensearch-lite-kubernetes-workgroup-security-requirements.md`
+  `docs/brainstorms/2026-04-29-mainstack-search-kubernetes-workgroup-security-requirements.md`
 - Existing implementation plan:
-  `docs/plans/2026-04-29-001-feat-opensearch-lite-implementation-plan.md`
+  `docs/plans/2026-04-29-001-feat-mainstack-search-implementation-plan.md`
 - Existing safety learning:
-  `docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md`
+  `docs/solutions/security-issues/mainstack-search-p1-code-review-hardening-2026-04-29.md`
 - Current config and startup: `src/config.rs`, `src/server.rs`, `src/main.rs`
 - Current pre-dispatch guard: `src/http/router.rs`, `src/http/request.rs`
 - Current API dispatch and fallback: `src/api/mod.rs`, `src/api_spec/mod.rs`

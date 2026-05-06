@@ -1,13 +1,13 @@
 ---
 date: 2026-04-29
-topic: opensearch-lite-kubernetes-workgroup-security
+topic: mainstack-search-kubernetes-workgroup-security
 ---
 
-# OpenSearch Lite Kubernetes Workgroup Security Requirements
+# mainstack-search Kubernetes Workgroup Security Requirements
 
 ## Summary
 
-OpenSearch Lite should add a first security tranche for Kubernetes and small
+mainstack-search should add a first security tranche for Kubernetes and small
 workgroup deployments where non-loopback exposure requires TLS and
 authentication by default, while loopback-only local development remains simple.
 The setup must be friendly to both humans and coding agents using shell,
@@ -17,7 +17,7 @@ container, and Kubernetes tooling.
 
 ## Problem Frame
 
-OpenSearch Lite currently optimizes for local development by defaulting to
+mainstack-search currently optimizes for local development by defaulting to
 loopback HTTP with no authentication. That is appropriate for disposable local
 use, but it creates friction when applications, official OpenSearch clients,
 or workgroup deployments are already configured for secured OpenSearch
@@ -35,9 +35,9 @@ to stand up a secured instance without guessing.
 
 ## Actors
 
-- A1. Application developer: runs OpenSearch Lite locally, in Docker, or in a
+- A1. Application developer: runs mainstack-search locally, in Docker, or in a
   Kubernetes workgroup environment.
-- A2. Coding agent: configures, diagnoses, and repairs OpenSearch Lite setup
+- A2. Coding agent: configures, diagnoses, and repairs mainstack-search setup
   through shell, Docker, and Kubernetes tools.
 - A3. OpenSearch client or application: connects using HTTPS and authentication
   settings expected for a secured OpenSearch cluster.
@@ -51,20 +51,20 @@ to stand up a secured instance without guessing.
 ## Key Flows
 
 - F1. Secured workgroup startup
-  - **Trigger:** A developer or operator deploys OpenSearch Lite with a
+  - **Trigger:** A developer or operator deploys mainstack-search with a
     non-loopback bind address.
   - **Actors:** A1, A2, A4
   - **Steps:** The deployment provides TLS material and at least one
     authentication configuration. The server validates that non-loopback
     exposure is secured before it starts. If security is missing, startup fails
     with an actionable explanation.
-  - **Outcome:** A network-reachable OpenSearch Lite instance does not start in
+  - **Outcome:** A network-reachable mainstack-search instance does not start in
     an accidentally unauthenticated cleartext posture.
   - **Covered by:** R1, R2, R3, R4, R11
 
 - F2. Client compatibility connection
   - **Trigger:** An application configured for secured OpenSearch connects to
-    OpenSearch Lite.
+    mainstack-search.
   - **Actors:** A1, A3
   - **Steps:** The client establishes TLS, presents supported credentials, and
     receives OpenSearch-shaped responses through the existing API handlers.
@@ -203,10 +203,10 @@ flowchart TD
 
 ## Success Criteria
 
-- Developers can run OpenSearch Lite in a Kubernetes or Docker workgroup setup
+- Developers can run mainstack-search in a Kubernetes or Docker workgroup setup
   without exposing an unauthenticated cleartext service by accident.
 - Applications that already expect HTTPS and basic secured-client credentials
-  can point at OpenSearch Lite with minimal configuration changes.
+  can point at mainstack-search with minimal configuration changes.
 - A coding agent can follow documented shell/container/Kubernetes workflows to
   configure, validate, and troubleshoot the secured deployment path.
 - Maintainers can clearly explain the difference between compatibility security
@@ -227,7 +227,7 @@ flowchart TD
 - AWS SigV4 is not the primary first-tranche target.
 - Wasm or wasmCloud deployment is not part of this tranche.
 - TLS/auth is not required for loopback-only disposable local development.
-- This feature does not make OpenSearch Lite a production OpenSearch
+- This feature does not make mainstack-search a production OpenSearch
   replacement.
 
 ---

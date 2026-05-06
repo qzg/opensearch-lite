@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Uri};
-use opensearch_lite::{
+use mainstack_search::{
     agent::{client::AgentClient, tools::AgentToolCall, validation::AgentResponseWrapper},
     http::{request::Request, router},
     server::AppState,
@@ -15,7 +15,7 @@ async fn call(
     method: Method,
     path: &str,
     body: Value,
-) -> opensearch_lite::responses::Response {
+) -> mainstack_search::responses::Response {
     let body = if body.is_null() {
         Bytes::new()
     } else {
@@ -34,7 +34,7 @@ async fn bulk_call(
     method: Method,
     path: &str,
     body: &'static str,
-) -> opensearch_lite::responses::Response {
+) -> mainstack_search::responses::Response {
     let mut headers = HeaderMap::new();
     headers.insert(
         "content-type",
@@ -55,7 +55,7 @@ async fn raw_call(
     path: &str,
     headers: HeaderMap,
     body: Bytes,
-) -> opensearch_lite::responses::Response {
+) -> mainstack_search::responses::Response {
     let request = Request::from_parts(method, path.parse::<Uri>().unwrap(), headers, body);
     router::handle(state.clone(), request).await
 }
@@ -173,7 +173,7 @@ async fn strict_mode_rejects_best_effort_without_allowlist() {
     assert_eq!(response.status, 501);
     assert_eq!(
         response.body.unwrap()["error"]["type"],
-        "opensearch_lite_strict_compatibility_exception"
+        "mainstack_search_strict_compatibility_exception"
     );
 }
 
@@ -198,7 +198,7 @@ async fn mocked_local_noop_routes_return_positive_compatibility_response() {
     assert_eq!(
         response
             .headers
-            .get("x-opensearch-lite-tier")
+            .get("x-mainstack-search-tier")
             .map(String::as_str),
         Some("mocked")
     );
@@ -208,8 +208,8 @@ async fn mocked_local_noop_routes_return_positive_compatibility_response() {
         body["persistent"]["cluster.metadata.password"],
         "[REDACTED]"
     );
-    assert_eq!(body["opensearch_lite"]["tier"], "mocked");
-    assert!(body["opensearch_lite"]["next_step"]
+    assert_eq!(body["mainstack_search"]["tier"], "mocked");
+    assert!(body["mainstack_search"]["next_step"]
         .as_str()
         .unwrap()
         .contains("full OpenSearch"));
@@ -230,13 +230,13 @@ async fn dashboards_browser_boot_mocked_routes_return_expected_shapes() {
     assert_eq!(
         account
             .headers
-            .get("x-opensearch-lite-api")
+            .get("x-mainstack-search-api")
             .map(String::as_str),
         Some("security.account")
     );
     let account_body = account.body.unwrap();
-    assert_eq!(account_body["user_name"], "opensearch_lite_local");
-    assert_eq!(account_body["user_id"], "opensearch_lite_local");
+    assert_eq!(account_body["user_name"], "mainstack_search_local");
+    assert_eq!(account_body["user_id"], "mainstack_search_local");
     assert_eq!(account_body["backend_roles"], json!(["admin"]));
     assert_eq!(account_body["tenants"]["global_tenant"], true);
 
@@ -251,7 +251,7 @@ async fn dashboards_browser_boot_mocked_routes_return_expected_shapes() {
     assert_eq!(
         datasources
             .headers
-            .get("x-opensearch-lite-api")
+            .get("x-mainstack-search-api")
             .map(String::as_str),
         Some("query.datasources")
     );
@@ -305,7 +305,7 @@ async fn strict_mode_rejects_mocked_without_allowlist() {
     assert_eq!(response.status, 501);
     assert_eq!(
         response.body.unwrap()["error"]["type"],
-        "opensearch_lite_strict_compatibility_exception"
+        "mainstack_search_strict_compatibility_exception"
     );
 }
 
@@ -354,7 +354,7 @@ async fn configured_agent_fallback_can_answer_read_request() {
     assert_eq!(
         response
             .headers
-            .get("x-opensearch-lite-tier")
+            .get("x-mainstack-search-tier")
             .map(String::as_str),
         Some("agent_fallback_eligible")
     );
@@ -438,7 +438,7 @@ async fn write_agent_fallback_requires_explicit_enablement_and_allowlist() {
     assert_eq!(response.status, 501);
     assert_eq!(
         response.body.unwrap()["error"]["type"],
-        "opensearch_lite_agent_write_fallback_disabled_exception"
+        "mainstack_search_agent_write_fallback_disabled_exception"
     );
     assert!(!state
         .store
@@ -488,7 +488,7 @@ async fn write_agent_fallback_allowlist_does_not_accept_wildcard() {
     assert_eq!(response.status, 501);
     assert_eq!(
         response.body.unwrap()["error"]["type"],
-        "opensearch_lite_agent_write_fallback_disabled_exception"
+        "mainstack_search_agent_write_fallback_disabled_exception"
     );
 }
 
@@ -835,11 +835,11 @@ async fn agent_response_headers_cannot_override_safety_headers() {
     config.ephemeral = true;
     config.agent.endpoint = Some("http://127.0.0.1:11434/v1/chat/completions".to_string());
     let mut headers = std::collections::BTreeMap::new();
-    headers.insert("x-opensearch-lite-tier".to_string(), "spoofed".to_string());
+    headers.insert("x-mainstack-search-tier".to_string(), "spoofed".to_string());
     headers.insert("set-cookie".to_string(), "session=bad".to_string());
     headers.insert(
         "warning".to_string(),
-        "199 OpenSearch-Lite fallback".to_string(),
+        "199 mainstack-search fallback".to_string(),
     );
     let wrapper = AgentResponseWrapper {
         status: 200,
@@ -858,14 +858,14 @@ async fn agent_response_headers_cannot_override_safety_headers() {
     assert_eq!(
         response
             .headers
-            .get("x-opensearch-lite-tier")
+            .get("x-mainstack-search-tier")
             .map(String::as_str),
         Some("agent_fallback_eligible")
     );
     assert!(!response.headers.contains_key("set-cookie"));
     assert_eq!(
         response.headers.get("warning").map(String::as_str),
-        Some("199 OpenSearch-Lite fallback")
+        Some("199 mainstack-search fallback")
     );
 }
 

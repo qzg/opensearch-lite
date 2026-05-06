@@ -333,7 +333,7 @@ impl RuntimeState {
 
     fn next_runtime_id(&self, prefix: &str) -> String {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        format!("opensearch-lite-{prefix}:{id}")
+        format!("mainstack-search-{prefix}:{id}")
     }
 }
 
@@ -358,7 +358,7 @@ impl TaskRecord {
         json!({
             "completed": true,
             "task": {
-                "node": "opensearch-lite",
+                "node": "mainstack-search",
                 "id": numeric_id,
                 "type": "transport",
                 "action": self.action,

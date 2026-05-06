@@ -1,7 +1,7 @@
 # OpenSearch YAML Parity Harness
 
 `tests/opensearch_yaml_runner.rs` runs selected upstream OpenSearch REST YAML
-fixtures against the in-process OpenSearch Lite router. The goal is to promote
+fixtures against the in-process mainstack-search router. The goal is to promote
 upstream behavior into executable local parity checks without requiring a JVM
 OpenSearch server for every test run.
 
@@ -64,7 +64,7 @@ but not yet fully executable through the small runner:
 
 ## Known Policy
 
-OpenSearch Lite should match the selected fixture assertions unless a
+mainstack-search should match the selected fixture assertions unless a
 documented local-only limitation is deliberately accepted. When a fixture
 exposes a gap in deterministic core behavior, prefer fixing the server over
 weakening the runner. When a fixture depends on production-only behavior,

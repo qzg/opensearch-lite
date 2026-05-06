@@ -1024,7 +1024,7 @@ fn date_bucket(value: &Value, interval: &str) -> Result<Option<DateTime<Utc>>, S
             .single(),
         other => {
             return Err(format!(
-                "date_histogram interval [{other}] is not supported by OpenSearch Lite"
+                "date_histogram interval [{other}] is not supported by mainstack-search"
             ));
         }
     };

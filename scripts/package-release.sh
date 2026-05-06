@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-BIN_NAME="opensearch-lite"
-VERSION="${OPENSEARCH_LITE_VERSION:-$(awk -F' = ' '$1 == "version" { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)}"
+BIN_NAME="mainstack-search"
+VERSION="${MAINSTACK_SEARCH_VERSION:-$(awk -F' = ' '$1 == "version" { gsub(/"/, "", $2); print $2; exit }' Cargo.toml)}"
 if [[ -z "$VERSION" || ! "$VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ || "$VERSION" == *..* ]]; then
   echo "invalid release version [$VERSION]" >&2
   exit 1

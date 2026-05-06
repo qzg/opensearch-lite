@@ -1,8 +1,8 @@
 ---
-title: OpenSearch Lite Agent Write Fallback And Durable Replay Hardening
+title: mainstack-search Agent Write Fallback And Durable Replay Hardening
 date: 2026-04-30
 category: security-issues
-module: opensearch-lite agent fallback and durable storage
+module: mainstack-search agent fallback and durable storage
 problem_type: security_issue
 component: assistant
 symptoms:
@@ -20,7 +20,7 @@ related_components:
   - testing_framework
   - documentation
 tags:
-  - opensearch-lite
+  - mainstack-search
   - agent-fallback
   - write-safety
   - mutation-log
@@ -30,11 +30,11 @@ tags:
   - durability
 ---
 
-# OpenSearch Lite Agent Write Fallback And Durable Replay Hardening
+# mainstack-search Agent Write Fallback And Durable Replay Hardening
 
 ## Problem
 
-OpenSearch Lite added raw agent-owned responses and write-enabled fallback for trusted local development, but the first implementation left several trust boundaries too soft. A fallback model could be useful for unsupported OpenSearch API families only if the server, not the model, remained responsible for durable mutation scope, route safety, memory admission, and recovery semantics.
+mainstack-search added raw agent-owned responses and write-enabled fallback for trusted local development, but the first implementation left several trust boundaries too soft. A fallback model could be useful for unsupported OpenSearch API families only if the server, not the model, remained responsible for durable mutation scope, route safety, memory admission, and recovery semantics.
 
 ## Symptoms
 
@@ -130,9 +130,9 @@ The fix splits responsibilities clearly:
 
 ## Related Issues
 
-- Moderate overlap: [OpenSearch Lite P1 Code Review Hardening](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md:1) covers the earlier read-only fallback, bulk, create-conflict, and memory-admission hardening; this doc covers write-enabled fallback, tool scope, durable replay, compaction recovery, and model benchmark prompt lessons.
-- Moderate overlap: [OpenSearch Lite Dashboards Migration API Surface Hardening](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/solutions/integration-issues/opensearch-lite-dashboards-migration-api-surface-hardening-2026-04-30.md:1) covers by-query, scroll, reindex, and Dashboards migration route safety; this doc covers fallback write tools and durable storage recovery.
-- Related snapshot route-safety follow-up: [OpenSearch Lite Snapshot Reserved Selector Delete Hardening](opensearch-lite-snapshot-reserved-selector-delete-hardening-2026-05-04.md) covers snapshot selector/control-token fail-closed handling.
-- Related guidance: [docs/agent-fallback.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/agent-fallback.md:1)
-- Related benchmark report: [reports/agent-fallback/live-model-discovery.json](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/reports/agent-fallback/live-model-discovery.json:1)
-- Related plan: [docs/plans/2026-04-30-003-feat-agent-fallback-write-support-plan.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/plans/2026-04-30-003-feat-agent-fallback-write-support-plan.md:1)
+- Moderate overlap: [mainstack-search P1 Code Review Hardening](/home/kiyu/Development/IBM/mainstack-search/docs/solutions/security-issues/mainstack-search-p1-code-review-hardening-2026-04-29.md:1) covers the earlier read-only fallback, bulk, create-conflict, and memory-admission hardening; this doc covers write-enabled fallback, tool scope, durable replay, compaction recovery, and model benchmark prompt lessons.
+- Moderate overlap: [mainstack-search Dashboards Migration API Surface Hardening](/home/kiyu/Development/IBM/mainstack-search/docs/solutions/integration-issues/mainstack-search-dashboards-migration-api-surface-hardening-2026-04-30.md:1) covers by-query, scroll, reindex, and Dashboards migration route safety; this doc covers fallback write tools and durable storage recovery.
+- Related snapshot route-safety follow-up: [mainstack-search Snapshot Reserved Selector Delete Hardening](mainstack-search-snapshot-reserved-selector-delete-hardening-2026-05-04.md) covers snapshot selector/control-token fail-closed handling.
+- Related guidance: [docs/agent-fallback.md](/home/kiyu/Development/IBM/mainstack-search/docs/agent-fallback.md:1)
+- Related benchmark report: [reports/agent-fallback/live-model-discovery.json](/home/kiyu/Development/IBM/mainstack-search/reports/agent-fallback/live-model-discovery.json:1)
+- Related plan: [docs/plans/2026-04-30-003-feat-agent-fallback-write-support-plan.md](/home/kiyu/Development/IBM/mainstack-search/docs/plans/2026-04-30-003-feat-agent-fallback-write-support-plan.md:1)

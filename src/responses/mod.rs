@@ -44,8 +44,8 @@ impl Response {
     }
 
     pub fn compatibility_signal(self, api_name: &str, tier: &str) -> Self {
-        self.header("x-opensearch-lite-api", api_name)
-            .header("x-opensearch-lite-tier", tier)
+        self.header("x-mainstack-search-api", api_name)
+            .header("x-mainstack-search-tier", tier)
     }
 
     pub fn into_axum(self) -> AxumResponse<Body> {
@@ -92,7 +92,7 @@ pub fn open_search_error(
     });
 
     if let Some(hint) = hint {
-        error["opensearch_lite_hint"] = Value::String(hint.to_string());
+        error["mainstack_search_hint"] = Value::String(hint.to_string());
     }
 
     Response::json(

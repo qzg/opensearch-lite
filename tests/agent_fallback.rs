@@ -1,4 +1,4 @@
-use opensearch_lite::{
+use mainstack_search::{
     agent::{
         tools::AgentToolCall,
         validation::{validate_wrapper, AgentResponseWrapper},
@@ -10,7 +10,7 @@ use serde_json::json;
 #[test]
 fn fallback_config_redacts_by_reference_and_rejects_insecure_network_http() {
     let error = Config::from_args([
-        "opensearch-lite",
+        "mainstack-search",
         "--agent-endpoint",
         "http://example.test/v1/chat/completions",
         "--agent-token-env",

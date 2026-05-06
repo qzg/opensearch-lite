@@ -1,7 +1,7 @@
 mod support;
 
 use http::Method;
-use opensearch_lite::{server::AppState, Config};
+use mainstack_search::{server::AppState, Config};
 use serde_json::{json, Value};
 use std::fs;
 use support::{call, durable_state};
@@ -26,7 +26,7 @@ async fn snapshot_apis_fail_closed_in_ephemeral_mode_without_writes() {
     assert_eq!(put_repo.status, 501);
     assert_eq!(
         put_repo.body.unwrap()["error"]["type"],
-        "opensearch_lite_unsupported_api_exception"
+        "mainstack_search_unsupported_api_exception"
     );
 
     let get_repo = call(&state, Method::GET, "/_snapshot", Value::Null).await;
@@ -239,7 +239,7 @@ async fn snapshot_restore_fails_closed_without_mutating_live_state() {
     assert_eq!(restore.status, 501);
     assert_eq!(
         restore.body.unwrap()["error"]["type"],
-        "opensearch_lite_unsupported_api_exception"
+        "mainstack_search_unsupported_api_exception"
     );
 
     let live = call(&state, Method::GET, "/orders/_doc/1", Value::Null).await;
@@ -307,7 +307,7 @@ async fn snapshot_operation_tokens_in_name_slot_fail_closed_without_creating_sna
         assert_eq!(response.status, 501, "{path}");
         assert_eq!(
             response.body.unwrap()["error"]["type"],
-            "opensearch_lite_unsupported_api_exception"
+            "mainstack_search_unsupported_api_exception"
         );
     }
 

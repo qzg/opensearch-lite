@@ -5,7 +5,7 @@ mod support;
 use std::{collections::BTreeSet, fs, path::Path, time::Duration};
 
 use http::Method;
-use opensearch_lite::{
+use mainstack_search::{
     server::AppState,
     storage::{mutation_log, Database},
     Config,
@@ -437,7 +437,7 @@ fn mutation_replay_rejects_missing_snapshot_high_water_transaction() {
     assert!(db.indexes.is_empty());
 }
 
-fn assert_status(response: opensearch_lite::responses::Response, expected: u16) {
+fn assert_status(response: mainstack_search::responses::Response, expected: u16) {
     assert_eq!(
         response.status, expected,
         "response body: {:?}",

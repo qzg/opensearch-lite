@@ -866,6 +866,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
+name = "mainstack-search"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "axum",
+ "axum-server",
+ "base64",
+ "bytes",
+ "chrono",
+ "fs2",
+ "http",
+ "rcgen",
+ "reqwest",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "tower",
+ "url",
+]
+
+[[package]]
 name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -958,31 +983,6 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
-
-[[package]]
-name = "opensearch-lite"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "axum",
- "axum-server",
- "base64",
- "bytes",
- "chrono",
- "fs2",
- "http",
- "rcgen",
- "reqwest",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "tokio",
- "tower",
- "url",
-]
 
 [[package]]
 name = "password-hash"

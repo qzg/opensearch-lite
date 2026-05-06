@@ -256,7 +256,7 @@ pub async fn live_model_discovery_report(
                 scores,
                 json!({
                     "chat_completions": config.chat_completions_url,
-                    "model_selection": "explicit OPENSEARCH_LITE_LIVE_AGENT_BENCH_MODELS for a direct OpenAI-compatible endpoint"
+                    "model_selection": "explicit MAINSTACK_SEARCH_LIVE_AGENT_BENCH_MODELS for a direct OpenAI-compatible endpoint"
                 }),
             )
         } else {
@@ -327,7 +327,7 @@ pub async fn live_model_discovery_report(
 fn direct_candidate_scores(requested_model_ids: &[String]) -> Result<Vec<CandidateScore>, String> {
     if requested_model_ids.is_empty() {
         return Err(
-            "direct OpenAI-compatible benchmark endpoints require OPENSEARCH_LITE_LIVE_AGENT_BENCH_MODELS"
+            "direct OpenAI-compatible benchmark endpoints require MAINSTACK_SEARCH_LIVE_AGENT_BENCH_MODELS"
                 .to_string(),
         );
     }
@@ -434,11 +434,11 @@ pub fn grade_agent_output(fixture: &BenchmarkFixture, raw: &str) -> FixtureGrade
             name: "tier".to_string(),
             passed: wrapper
                 .body
-                .get("opensearch_lite")
+                .get("mainstack_search")
                 .and_then(|note| note.get("tier"))
                 .and_then(Value::as_str)
                 == Some(tier),
-            reason: format!("expected body.opensearch_lite.tier={tier}"),
+            reason: format!("expected body.mainstack_search.tier={tier}"),
         });
     }
 

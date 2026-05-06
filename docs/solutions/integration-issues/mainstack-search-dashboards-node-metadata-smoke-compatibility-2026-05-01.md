@@ -1,8 +1,8 @@
 ---
-title: OpenSearch Lite Dashboards Node Metadata Smoke Compatibility
+title: mainstack-search Dashboards Node Metadata Smoke Compatibility
 date: 2026-05-01
 category: integration-issues
-module: opensearch-lite dashboards metadata api
+module: mainstack-search dashboards metadata api
 problem_type: integration_issue
 component: tooling
 symptoms:
@@ -17,7 +17,7 @@ related_components:
   - testing_framework
   - documentation
 tags:
-  - opensearch-lite
+  - mainstack-search
   - opensearch-dashboards
   - api-compatibility
   - nodes-info
@@ -26,12 +26,12 @@ tags:
   - docker-smoke
 ---
 
-# OpenSearch Lite Dashboards Node Metadata Smoke Compatibility
+# mainstack-search Dashboards Node Metadata Smoke Compatibility
 
 ## Problem
 
 The first Docker-hosted OpenSearch Dashboards smoke exposed a node metadata
-compatibility gap in OpenSearch Lite. Dashboards booted far enough to ask the
+compatibility gap in mainstack-search. Dashboards booted far enough to ask the
 server for node versions, but the best-effort `/_nodes` response returned no
 nodes, so Dashboards could not confirm the connected OpenSearch version.
 
@@ -41,7 +41,7 @@ nodes, so Dashboards could not confirm the connected OpenSearch version.
   information from OpenSearch nodes.
 - The observed request was
   `GET /_nodes?filter_path=nodes.*.version,nodes.*.http.publish_address,nodes.*.ip`.
-- OpenSearch Lite answered the route as best-effort metadata, but the body was
+- mainstack-search answered the route as best-effort metadata, but the body was
   only an empty `nodes` object.
 - The initial fix risked over-broadening the response because every `/_nodes*`
   path could receive a `nodes.info` body, including `/_nodes/stats`.
@@ -64,7 +64,7 @@ nodes, so Dashboards could not confirm the connected OpenSearch version.
 
 ## Solution
 
-OpenSearch Lite now gives `nodes.info` a real single-node best-effort response,
+mainstack-search now gives `nodes.info` a real single-node best-effort response,
 but keeps route classification deliberate.
 
 The handler dispatches by classified API name instead of a broad path prefix:
@@ -93,7 +93,7 @@ client asks for a filtered shape:
 ```json
 {
   "nodes": {
-    "opensearch-lite-local-node": {
+    "mainstack-search-local-node": {
       "version": "3.6.0",
       "ip": "127.0.0.1",
       "http": {
@@ -126,7 +126,7 @@ if segments.first() == Some(&"_nodes") {
 The fixture coverage now checks:
 
 - Dashboards' exact `/_nodes?filter_path=...` request shape.
-- `x-opensearch-lite-api` and `x-opensearch-lite-tier` compatibility headers.
+- `x-mainstack-search-api` and `x-mainstack-search-tier` compatibility headers.
 - Non-default configured version and listener metadata.
 - Distinct `nodes.stats` best-effort response shape.
 - Filtered `nodes.stats` responses.

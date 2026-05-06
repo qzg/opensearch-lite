@@ -138,8 +138,8 @@ impl SnapshotService {
         self.read_latest(&name)?;
         Ok(json!({
             "nodes": {
-                "opensearch-lite-local": {
-                    "name": "opensearch-lite-local"
+                "mainstack-search-local": {
+                    "name": "mainstack-search-local"
                 }
             }
         }))
@@ -222,7 +222,7 @@ impl SnapshotService {
         let manifest = SnapshotManifest {
             name: snapshot.clone(),
             uuid: format!(
-                "opensearch-lite-{now}-{:016x}",
+                "mainstack-search-{now}-{:016x}",
                 fnv1a64(snapshot.as_bytes())
             ),
             state: "SUCCESS".to_string(),
@@ -374,7 +374,7 @@ impl SnapshotService {
         if self.ephemeral {
             return Err(StoreError::new(
                 501,
-                "opensearch_lite_unsupported_api_exception",
+                "mainstack_search_unsupported_api_exception",
                 "snapshot repositories are unavailable in --ephemeral mode",
             ));
         }
@@ -441,9 +441,9 @@ fn repository_type(body: &Value) -> StoreResult<String> {
     if repository_type.is_empty() {
         return Err(invalid_repository("repository type must not be empty"));
     }
-    if !matches!(repository_type, "fs" | "opensearch_lite") {
+    if !matches!(repository_type, "fs" | "mainstack_search") {
         return Err(invalid_repository(format!(
-            "repository type [{repository_type}] is not supported by OpenSearch Lite"
+            "repository type [{repository_type}] is not supported by mainstack-search"
         )));
     }
     Ok(repository_type.to_string())

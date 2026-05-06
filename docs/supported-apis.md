@@ -104,9 +104,9 @@ compatibility headers:
 ## Mocked Local No-Ops
 
 Mocked responses are positive compatibility no-ops for APIs whose distributed
-cluster side effects do not exist in OpenSearch Lite. They include compatibility
+cluster side effects do not exist in mainstack-search. They include compatibility
 headers and, where response-shape compatibility allows it, an
-`opensearch_lite` body field explaining the local behavior and the path to full
+`mainstack_search` body field explaining the local behavior and the path to full
 OpenSearch when the behavior matters.
 
 Initial mocked families:

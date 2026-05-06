@@ -6,14 +6,14 @@ pub fn root_info(config: &Config) -> Response {
     Response::json(
         200,
         json!({
-            "name": "opensearch-lite",
-            "cluster_name": "opensearch-lite",
-            "cluster_uuid": "opensearch-lite-local",
+            "name": "mainstack-search",
+            "cluster_name": "mainstack-search",
+            "cluster_uuid": "mainstack-search-local",
             "version": {
                 "distribution": "opensearch",
                 "number": config.advertised_version,
                 "build_type": "local",
-                "build_hash": "opensearch-lite",
+                "build_hash": "mainstack-search",
                 "build_date": "2026-04-29T00:00:00Z",
                 "build_snapshot": false,
                 "lucene_version": "local",

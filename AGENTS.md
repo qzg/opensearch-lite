@@ -15,9 +15,9 @@ user explicitly asks:
   reference.
 - `../OpenSearch-Dashboards` is a checkout of OpenSearch Dashboards for
   application-driven API gap analysis.
-- `../axon` is the target development architecture that will consume this
+- `../Mainstack` is the target development architecture that will consume this
   server.
-- `../cqlite-server` contains the related lightweight Cassandra-compatible
+- `../mainstack-cql` contains the related lightweight Cassandra-compatible
   service and storage-pattern inspiration.
 
 ## Implementation Guidance
@@ -84,9 +84,9 @@ behavior:
 scripts/run-python-client-smoke.sh
 scripts/run-javascript-client-smoke.sh
 scripts/run-java-client-smoke.sh
-OPENSEARCH_LITE_SECURE_SMOKE=1 scripts/run-python-client-smoke.sh
-OPENSEARCH_LITE_SECURE_SMOKE=1 scripts/run-javascript-client-smoke.sh
-OPENSEARCH_LITE_SECURE_SMOKE=1 scripts/run-java-client-smoke.sh
+MAINSTACK_SEARCH_SECURE_SMOKE=1 scripts/run-python-client-smoke.sh
+MAINSTACK_SEARCH_SECURE_SMOKE=1 scripts/run-javascript-client-smoke.sh
+MAINSTACK_SEARCH_SECURE_SMOKE=1 scripts/run-java-client-smoke.sh
 ```
 
 ## Documentation

@@ -1,8 +1,8 @@
 ---
-title: OpenSearch Lite Kubernetes Workgroup Security
+title: mainstack-search Kubernetes Workgroup Security
 date: 2026-04-30
 category: security-issues
-module: opensearch-lite security
+module: mainstack-search security
 problem_type: security_issue
 component: authentication
 symptoms:
@@ -17,7 +17,7 @@ related_components:
   - testing_framework
   - documentation
 tags:
-  - opensearch-lite
+  - mainstack-search
   - tls
   - basic-auth
   - kubernetes
@@ -27,11 +27,11 @@ tags:
   - security
 ---
 
-# OpenSearch Lite Kubernetes Workgroup Security
+# mainstack-search Kubernetes Workgroup Security
 
 ## Problem
 
-OpenSearch Lite needed a secured workgroup posture before it could be safely run in Docker or Kubernetes on a non-loopback interface. The local loopback experience still needed to stay frictionless, but container-style binding to `0.0.0.0` could not silently expose HTTP/no-auth APIs, runtime agent fallback, or local development data.
+mainstack-search needed a secured workgroup posture before it could be safely run in Docker or Kubernetes on a non-loopback interface. The local loopback experience still needed to stay frictionless, but container-style binding to `0.0.0.0` could not silently expose HTTP/no-auth APIs, runtime agent fallback, or local development data.
 
 ## Symptoms
 
@@ -88,7 +88,7 @@ The router authorizes before dispatch, and `api::handle_request` authorizes as w
 
 The user-facing workflow is documented and testable from a shell. `docs/security.md` covers the users-file schema, TLS flags, role model, and validation commands. `docs/kubernetes-security.md` shows mounted Secret layouts, TCP probes, restart-based Secret rotation, and `kubectl exec` validation. The Docker assets include a non-root image path and a secure compose example with mounted TLS/users files.
 
-The official-client smoke scripts now support secure mode through `OPENSEARCH_LITE_SECURE_SMOKE=1`, generate temporary test-only certs and users files, and configure Python, JavaScript, and Java clients for HTTPS, Basic auth, and CA trust. External smoke runs also support password files and strip trailing CR/LF from mounted secrets.
+The official-client smoke scripts now support secure mode through `MAINSTACK_SEARCH_SECURE_SMOKE=1`, generate temporary test-only certs and users files, and configure Python, JavaScript, and Java clients for HTTPS, Basic auth, and CA trust. External smoke runs also support password files and strip trailing CR/LF from mounted secrets.
 
 ## Why This Works
 
@@ -110,18 +110,18 @@ The request path also now has one consistent security story. Authentication happ
 - Run the secure official-client smokes after changing TLS, auth, or users-file behavior:
 
 ```sh
-OPENSEARCH_LITE_SECURE_SMOKE=1 scripts/run-python-client-smoke.sh
-OPENSEARCH_LITE_SECURE_SMOKE=1 scripts/run-javascript-client-smoke.sh
-OPENSEARCH_LITE_SECURE_SMOKE=1 scripts/run-java-client-smoke.sh
+MAINSTACK_SEARCH_SECURE_SMOKE=1 scripts/run-python-client-smoke.sh
+MAINSTACK_SEARCH_SECURE_SMOKE=1 scripts/run-javascript-client-smoke.sh
+MAINSTACK_SEARCH_SECURE_SMOKE=1 scripts/run-java-client-smoke.sh
 ```
 
 - Keep docs and examples secret-file oriented. Mounted files and env vars are easier for Docker, Kubernetes, and coding agents to inspect and repair than secrets embedded in command-line arguments.
 
 ## Related Issues
 
-- [OpenSearch Lite P1 Code Review Hardening](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md:1) has moderate overlap: both documents treat route classification and agent fallback as security boundaries, but this doc covers the deployment posture, TLS/auth, and shell-operable diagnostics tranche.
-- [OpenSearch Lite Snapshot Reserved Selector Delete Hardening](opensearch-lite-snapshot-reserved-selector-delete-hardening-2026-05-04.md) applies the same route-inventory and admin fail-closed boundary to snapshot selector/control-token APIs.
-- [docs/security.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/security.md:1)
-- [docs/kubernetes-security.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/kubernetes-security.md:1)
-- [docs/agent-fallback.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/agent-fallback.md:1)
-- [docs/plans/2026-04-30-001-feat-kubernetes-workgroup-security-plan.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/plans/2026-04-30-001-feat-kubernetes-workgroup-security-plan.md:1)
+- [mainstack-search P1 Code Review Hardening](/home/kiyu/Development/IBM/mainstack-search/docs/solutions/security-issues/mainstack-search-p1-code-review-hardening-2026-04-29.md:1) has moderate overlap: both documents treat route classification and agent fallback as security boundaries, but this doc covers the deployment posture, TLS/auth, and shell-operable diagnostics tranche.
+- [mainstack-search Snapshot Reserved Selector Delete Hardening](mainstack-search-snapshot-reserved-selector-delete-hardening-2026-05-04.md) applies the same route-inventory and admin fail-closed boundary to snapshot selector/control-token APIs.
+- [docs/security.md](/home/kiyu/Development/IBM/mainstack-search/docs/security.md:1)
+- [docs/kubernetes-security.md](/home/kiyu/Development/IBM/mainstack-search/docs/kubernetes-security.md:1)
+- [docs/agent-fallback.md](/home/kiyu/Development/IBM/mainstack-search/docs/agent-fallback.md:1)
+- [docs/plans/2026-04-30-001-feat-kubernetes-workgroup-security-plan.md](/home/kiyu/Development/IBM/mainstack-search/docs/plans/2026-04-30-001-feat-kubernetes-workgroup-security-plan.md:1)

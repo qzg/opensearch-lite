@@ -1,6 +1,6 @@
-# OpenSearch Lite
+# mainstack-search
 
-`opensearch-lite` is a local-only, Rust-based OpenSearch-compatible server for
+`mainstack-search` is a local-only, Rust-based OpenSearch-compatible server for
 development stacks. It targets recent OpenSearch 3.x client behavior while using
 small, readable local storage and deterministic local implementations for core
 index, document, bulk, count, multi-get, multi-search, field discovery,
@@ -47,13 +47,13 @@ they can contain indexed document content.
 ## Secured Workgroup Start
 
 ```sh
-opensearch-lite \
+mainstack-search \
   --listen 0.0.0.0:9200 \
   --allow-nonlocal-listen \
-  --tls-cert-file /run/opensearch-lite/tls/tls.crt \
-  --tls-key-file /run/opensearch-lite/tls/tls.key \
-  --tls-ca-file /run/opensearch-lite/tls/ca.crt \
-  --users-file /run/opensearch-lite/auth/users.json
+  --tls-cert-file /run/mainstack-search/tls/tls.crt \
+  --tls-key-file /run/mainstack-search/tls/tls.key \
+  --tls-ca-file /run/mainstack-search/tls/ca.crt \
+  --users-file /run/mainstack-search/auth/users.json
 ```
 
 Run the same arguments with `--validate-config` from a shell, `docker exec`, or
@@ -69,7 +69,7 @@ Build a local release zip for the current operating system and CPU:
 scripts/package-release.sh
 ```
 
-The script writes `dist/opensearch-lite-<version>-<os>-<arch>.zip` and a
+The script writes `dist/mainstack-search-<version>-<os>-<arch>.zip` and a
 matching `.sha256` checksum. Build each target platform separately.
 
 ## Verification
@@ -85,7 +85,7 @@ OPENSEARCH_PARITY_DOCKER=1 scripts/run-opensearch-parity-smoke.sh
 
 The ignored client smoke tests invoke the matching scripts under `scripts/`.
 Those scripts can also be run directly when debugging a single client.
-Set `OPENSEARCH_LITE_SECURE_SMOKE=1` on a smoke script to start a temporary
+Set `MAINSTACK_SEARCH_SECURE_SMOKE=1` on a smoke script to start a temporary
 HTTPS/auth server and prove CA-trusted client connectivity.
 Selected upstream REST YAML fixtures run through
 `cargo test --test opensearch_yaml_runner`; see `docs/yaml-parity.md` for the

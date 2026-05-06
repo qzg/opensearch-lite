@@ -1,13 +1,13 @@
 ---
 date: 2026-04-30
-topic: opensearch-lite-agent-fallback-write-support
+topic: mainstack-search-agent-fallback-write-support
 ---
 
-# OpenSearch Lite Agent Fallback Write Support Requirements
+# mainstack-search Agent Fallback Write Support Requirements
 
 ## Summary
 
-OpenSearch Lite will expand runtime agent fallback from read-only compatibility
+mainstack-search will expand runtime agent fallback from read-only compatibility
 into a write-capable development feature with explicit commit-tool boundaries,
 model benchmarking, safer benign compatibility responses, and a stronger
 snapshot/log resource model. The first API priority is catalog, template,
@@ -18,7 +18,7 @@ explain, validation, and analysis compatibility.
 
 ## Problem Frame
 
-OpenSearch Lite exists to let developers and small workgroups build against a
+mainstack-search exists to let developers and small workgroups build against a
 recent OpenSearch-compatible API without carrying the JVM and cluster overhead
 of full OpenSearch. The deterministic API surface has grown, but the vendored
 OpenSearch REST inventory still includes many APIs that are either fallback
@@ -59,7 +59,7 @@ flowchart TD
 
 ## Actors
 
-- A1. Application developer: Runs OpenSearch Lite as a local or workgroup
+- A1. Application developer: Runs mainstack-search as a local or workgroup
   OpenSearch-compatible endpoint while building against normal OpenSearch
   clients.
 - A2. Coding agent caller: Sends requests, reads fallback hints, inspects local
@@ -258,7 +258,7 @@ flowchart TD
   must fail fast before OOM-prone work.
 - R36. Fail-fast memory diagnostics must write explicit logs with remediation
   directions, including increasing local or container memory, reducing local
-  data, lowering OpenSearch Lite limits, using a smaller data directory, or
+  data, lowering mainstack-search limits, using a smaller data directory, or
   moving to full/cloud/server-hosted OpenSearch when the local machine cannot
   provide enough memory.
 - R37. Agent-operable diagnostics must expose the configured data budget,

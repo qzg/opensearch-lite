@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${OPENSEARCH_LITE_JS_SMOKE_PORT:-19204}"
-SECURE_SMOKE="${OPENSEARCH_LITE_SECURE_SMOKE:-0}"
+PORT="${MAINSTACK_SEARCH_JS_SMOKE_PORT:-19204}"
+SECURE_SMOKE="${MAINSTACK_SEARCH_SECURE_SMOKE:-0}"
 if [[ -n "${OPENSEARCH_URL:-}" ]]; then
   URL="${OPENSEARCH_URL}"
 elif [[ "${SECURE_SMOKE}" == "1" ]]; then
@@ -12,7 +12,7 @@ else
   URL="http://127.0.0.1:${PORT}"
 fi
 SERVER_PID=""
-WORK_DIR="${TMPDIR:-/tmp}/opensearch-lite-js-smoke"
+WORK_DIR="${TMPDIR:-/tmp}/mainstack-search-js-smoke"
 SECURITY_DIR=""
 
 cleanup() {
@@ -42,7 +42,7 @@ if [[ -z "${OPENSEARCH_URL:-}" && "${SECURE_SMOKE}" == "1" ]]; then
     echo "openssl is required for secure local smoke fixtures" >&2
     exit 2
   fi
-  SECURITY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/opensearch-lite-js-security.XXXXXX")"
+  SECURITY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mainstack-search-js-security.XXXXXX")"
   openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
     -subj "/CN=localhost" \
     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
@@ -53,7 +53,7 @@ if [[ -z "${OPENSEARCH_URL:-}" && "${SECURE_SMOKE}" == "1" ]]; then
 JSON
   export OPENSEARCH_CA_CERT="${SECURITY_DIR}/cert.pem"
   export OPENSEARCH_USERNAME="smoke"
-  export OPENSEARCH_PASSWORD="opensearch-lite-smoke-password"
+  export OPENSEARCH_PASSWORD="mainstack-search-smoke-password"
 fi
 
 if [[ -z "${OPENSEARCH_URL:-}" ]]; then
@@ -70,7 +70,7 @@ if [[ -z "${OPENSEARCH_URL:-}" ]]; then
     )
   fi
   cargo run --manifest-path "${ROOT_DIR}/Cargo.toml" -- \
-    "${SERVER_ARGS[@]}" >"${TMPDIR:-/tmp}/opensearch-lite-js-smoke.log" 2>&1 &
+    "${SERVER_ARGS[@]}" >"${TMPDIR:-/tmp}/mainstack-search-js-smoke.log" 2>&1 &
   SERVER_PID="$!"
 
   for _ in $(seq 1 80); do

@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Uri};
-use opensearch_lite::{
+use mainstack_search::{
     http::request::Request, http::router, responses::Response, server::AppState, Config,
 };
 use serde_json::Value;

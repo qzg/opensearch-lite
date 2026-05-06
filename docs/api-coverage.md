@@ -1,6 +1,6 @@
 # API Coverage Visualization
 
-Generated from `opensearch_lite::api_spec::inventory()` over the pinned OpenSearch REST spec plus OpenSearch Lite manual route overlays.
+Generated from `mainstack_search::api_spec::inventory()` over the pinned OpenSearch REST spec plus mainstack-search manual route overlays.
 
 ## Summary
 

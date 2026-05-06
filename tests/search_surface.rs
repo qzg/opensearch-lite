@@ -199,12 +199,12 @@ async fn msearch_pit_and_search_after_fail_closed_per_item() {
     let body = response.body.unwrap();
     assert_eq!(
         body["responses"][0]["error"]["type"],
-        "opensearch_lite_unsupported_api_exception"
+        "mainstack_search_unsupported_api_exception"
     );
     assert_eq!(body["responses"][0]["status"], 501);
     assert_eq!(
         body["responses"][1]["error"]["type"],
-        "opensearch_lite_unsupported_api_exception"
+        "mainstack_search_unsupported_api_exception"
     );
     assert_eq!(body["responses"][1]["status"], 501);
 }
@@ -463,7 +463,7 @@ async fn validate_query_analyze_and_explain_are_bounded_local_scaffolds() {
     assert_eq!(body["matched"], true);
     assert_eq!(
         body["explanation"]["description"],
-        "OpenSearch Lite local evaluator match result"
+        "mainstack-search local evaluator match result"
     );
 }
 

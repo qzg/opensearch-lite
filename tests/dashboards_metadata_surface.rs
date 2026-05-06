@@ -1,7 +1,7 @@
 mod support;
 
 use http::Method;
-use opensearch_lite::{
+use mainstack_search::{
     server::AppState,
     storage::mutation_log::{self, Mutation},
     Config,
@@ -213,11 +213,11 @@ async fn dashboards_data_view_metadata_is_deterministic() {
     let stats = call(&state, Method::GET, "/_cluster/stats", Value::Null).await;
     assert_eq!(stats.status, 200);
     let body = stats.body.unwrap();
-    assert_eq!(body["cluster_name"], "opensearch-lite");
+    assert_eq!(body["cluster_name"], "mainstack-search");
     assert!(body["cluster_uuid"]
         .as_str()
         .unwrap()
-        .starts_with("opensearch-lite-"));
+        .starts_with("mainstack-search-"));
     assert_eq!(body["nodes"]["count"]["total"], 1);
     assert_eq!(body["indices"]["count"], 3);
     assert_eq!(body["indices"]["docs"]["count"], 1);
@@ -234,14 +234,14 @@ async fn dashboards_data_view_metadata_is_deterministic() {
     assert_eq!(
         nodes
             .headers
-            .get("x-opensearch-lite-api")
+            .get("x-mainstack-search-api")
             .map(String::as_str),
         Some("nodes.info")
     );
     assert_eq!(
         nodes
             .headers
-            .get("x-opensearch-lite-tier")
+            .get("x-mainstack-search-tier")
             .map(String::as_str),
         Some("best_effort")
     );
@@ -656,14 +656,14 @@ async fn nodes_metadata_uses_configured_version_and_listener() {
     assert_eq!(
         stats
             .headers
-            .get("x-opensearch-lite-api")
+            .get("x-mainstack-search-api")
             .map(String::as_str),
         Some("nodes.stats")
     );
     assert_eq!(
         stats
             .headers
-            .get("x-opensearch-lite-tier")
+            .get("x-mainstack-search-tier")
             .map(String::as_str),
         Some("best_effort")
     );
@@ -690,7 +690,7 @@ async fn nodes_metadata_uses_configured_version_and_listener() {
     assert_eq!(
         filtered_stats
             .headers
-            .get("x-opensearch-lite-tier")
+            .get("x-mainstack-search-tier")
             .map(String::as_str),
         Some("best_effort")
     );

@@ -1,8 +1,8 @@
 ---
-title: OpenSearch Lite Dashboards Migration API Surface Hardening
+title: mainstack-search Dashboards Migration API Surface Hardening
 date: 2026-04-30
 category: integration-issues
-module: opensearch-lite dashboards migration api
+module: mainstack-search dashboards migration api
 problem_type: integration_issue
 component: tooling
 symptoms:
@@ -19,7 +19,7 @@ related_components:
   - testing_framework
   - documentation
 tags:
-  - opensearch-lite
+  - mainstack-search
   - opensearch-dashboards
   - api-compatibility
   - saved-object-migrations
@@ -29,11 +29,11 @@ tags:
   - route-classification
 ---
 
-# OpenSearch Lite Dashboards Migration API Surface Hardening
+# mainstack-search Dashboards Migration API Surface Hardening
 
 ## Problem
 
-OpenSearch Lite's OpenSearch Dashboards saved-object migration surface had several code-review failures across scroll, by-query mutations, reindex, route classification, and term query evaluation. The defects made the local development server too permissive in some mutating paths, too incomplete in some client-compatible read paths, and too willing to retain or mutate more state than the caller explicitly requested.
+mainstack-search's OpenSearch Dashboards saved-object migration surface had several code-review failures across scroll, by-query mutations, reindex, route classification, and term query evaluation. The defects made the local development server too permissive in some mutating paths, too incomplete in some client-compatible read paths, and too willing to retain or mutate more state than the caller explicitly requested.
 
 ## Symptoms
 
@@ -94,9 +94,9 @@ This also keeps runtime agent fallback out of the story. Known mutating or wrong
 
 ## Related Issues
 
-- [OpenSearch Lite P1 Code Review Hardening](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md:1) has moderate overlap around route classification, fallback safety, and storage validation. This document covers the later Dashboards migration API tranche.
-- [OpenSearch Lite Kubernetes Workgroup Security](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/solutions/security-issues/opensearch-lite-kubernetes-workgroup-security-2026-04-30.md:1) is adjacent because it also treats route inventory and authorization as security boundaries.
-- [OpenSearch Lite Snapshot Reserved Selector Delete Hardening](../security-issues/opensearch-lite-snapshot-reserved-selector-delete-hardening-2026-05-04.md) is adjacent because it applies exact-shape fail-closed handling to snapshot selector/control-token paths.
-- [Dashboards gap analysis](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/opensearch-dashboards-gap-analysis.md:89) tracks the application-driven API surface that motivated these migration handlers.
-- [Supported APIs](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/supported-apis.md:39) documents the deterministic API surface after this tranche.
+- [mainstack-search P1 Code Review Hardening](/home/kiyu/Development/IBM/mainstack-search/docs/solutions/security-issues/mainstack-search-p1-code-review-hardening-2026-04-29.md:1) has moderate overlap around route classification, fallback safety, and storage validation. This document covers the later Dashboards migration API tranche.
+- [mainstack-search Kubernetes Workgroup Security](/home/kiyu/Development/IBM/mainstack-search/docs/solutions/security-issues/mainstack-search-kubernetes-workgroup-security-2026-04-30.md:1) is adjacent because it also treats route inventory and authorization as security boundaries.
+- [mainstack-search Snapshot Reserved Selector Delete Hardening](../security-issues/mainstack-search-snapshot-reserved-selector-delete-hardening-2026-05-04.md) is adjacent because it applies exact-shape fail-closed handling to snapshot selector/control-token paths.
+- [Dashboards gap analysis](/home/kiyu/Development/IBM/mainstack-search/docs/opensearch-dashboards-gap-analysis.md:89) tracks the application-driven API surface that motivated these migration handlers.
+- [Supported APIs](/home/kiyu/Development/IBM/mainstack-search/docs/supported-apis.md:39) documents the deterministic API surface after this tranche.
 - No related GitHub issues were found by `gh issue list` for this tranche.

@@ -154,7 +154,7 @@ fn allowed_agent_header(name: &str) -> bool {
 pub fn failure_response(error: AgentError) -> Response {
     open_search_error(
         501,
-        "opensearch_lite_agent_fallback_exception",
+        "mainstack_search_agent_fallback_exception",
         error.reason,
         Some(&error.hint),
     )

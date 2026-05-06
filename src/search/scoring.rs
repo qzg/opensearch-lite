@@ -1,1 +1,1 @@
-// OpenSearch Lite uses deterministic local scores rather than Lucene parity.
+// mainstack-search uses deterministic local scores rather than Lucene parity.

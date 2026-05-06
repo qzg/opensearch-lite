@@ -1,6 +1,6 @@
 use std::{env, fs, path::Path};
 
-use opensearch_lite::agent::benchmark::{
+use mainstack_search::agent::benchmark::{
     dry_run_report, live_model_discovery_report, load_fixtures, parse_candidate_sample,
     LiveBenchmarkConfig, OPENROUTER_CHAT_COMPLETIONS_URL,
 };
@@ -26,22 +26,22 @@ async fn main() {
     let candidates = parse_candidate_sample(&sample);
     let report = dry_run_report(&fixtures, &candidates);
 
-    if env::var("OPENSEARCH_LITE_LIVE_AGENT_BENCH").ok().as_deref() != Some("1") {
+    if env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH").ok().as_deref() != Some("1") {
         println!("{report}");
         println!(
-            "agent_fallback_models: dry-run only; set OPENSEARCH_LITE_LIVE_AGENT_BENCH=1 with ignored local credentials for live OpenRouter/Artificial Analysis runs"
+            "agent_fallback_models: dry-run only; set MAINSTACK_SEARCH_LIVE_AGENT_BENCH=1 with ignored local credentials for live OpenRouter/Artificial Analysis runs"
         );
         return;
     }
 
-    let chat_completions_url = env::var("OPENSEARCH_LITE_LIVE_AGENT_BENCH_ENDPOINT")
+    let chat_completions_url = env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH_ENDPOINT")
         .unwrap_or_else(|_| OPENROUTER_CHAT_COMPLETIONS_URL.to_string());
     let direct_endpoint =
         chat_completions_url.trim_end_matches('/') != OPENROUTER_CHAT_COMPLETIONS_URL;
     let model_ids = parse_model_ids();
     let openrouter_api_key = env::var("OPENROUTER_API_KEY").ok();
     let artificial_analysis_api_key = env::var("ARTIFICIAL_ANALYSIS_API_KEY").ok();
-    let chat_api_key = env::var("OPENSEARCH_LITE_LIVE_AGENT_BENCH_API_KEY")
+    let chat_api_key = env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH_API_KEY")
         .ok()
         .filter(|key| !key.trim().is_empty())
         .or_else(|| {
@@ -54,7 +54,7 @@ async fn main() {
     if direct_endpoint {
         assert!(
             !model_ids.is_empty(),
-            "direct endpoint benchmarks require OPENSEARCH_LITE_LIVE_AGENT_BENCH_MODELS"
+            "direct endpoint benchmarks require MAINSTACK_SEARCH_LIVE_AGENT_BENCH_MODELS"
         );
     } else {
         assert!(
@@ -69,30 +69,30 @@ async fn main() {
             artificial_analysis_api_key: artificial_analysis_api_key.unwrap_or_default(),
             chat_completions_url: chat_completions_url.clone(),
             chat_api_key,
-            max_candidates: env::var("OPENSEARCH_LITE_LIVE_AGENT_BENCH_LIMIT")
+            max_candidates: env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH_LIMIT")
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(12),
             model_ids: model_ids.clone(),
-            execute_fixture_prompts: env::var("OPENSEARCH_LITE_LIVE_AGENT_BENCH_EXECUTE")
+            execute_fixture_prompts: env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH_EXECUTE")
                 .ok()
                 .as_deref()
                 == Some("1"),
             execution_candidate_limit: env::var(
-                "OPENSEARCH_LITE_LIVE_AGENT_BENCH_EXECUTION_MODEL_LIMIT",
+                "MAINSTACK_SEARCH_LIVE_AGENT_BENCH_EXECUTION_MODEL_LIMIT",
             )
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(3),
-            fixture_limit: env::var("OPENSEARCH_LITE_LIVE_AGENT_BENCH_FIXTURE_LIMIT")
+            fixture_limit: env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH_FIXTURE_LIMIT")
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(fixtures.len()),
-            request_timeout_secs: env::var("OPENSEARCH_LITE_LIVE_AGENT_BENCH_TIMEOUT_SECS")
+            request_timeout_secs: env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH_TIMEOUT_SECS")
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(60),
-            max_completion_tokens: env::var("OPENSEARCH_LITE_LIVE_AGENT_BENCH_MAX_TOKENS")
+            max_completion_tokens: env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH_MAX_TOKENS")
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(1600),
@@ -118,7 +118,7 @@ async fn main() {
 }
 
 fn parse_model_ids() -> Vec<String> {
-    env::var("OPENSEARCH_LITE_LIVE_AGENT_BENCH_MODELS")
+    env::var("MAINSTACK_SEARCH_LIVE_AGENT_BENCH_MODELS")
         .ok()
         .into_iter()
         .flat_map(|value| {

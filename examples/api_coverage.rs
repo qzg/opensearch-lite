@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use opensearch_lite::api_spec::{inventory, AccessClass, Tier};
+use mainstack_search::api_spec::{inventory, AccessClass, Tier};
 
 #[derive(Default)]
 struct TierCounts {
@@ -74,7 +74,7 @@ fn main() {
     println!("# API Coverage Visualization");
     println!();
     println!(
-        "Generated from `opensearch_lite::api_spec::inventory()` over the pinned OpenSearch REST spec plus OpenSearch Lite manual route overlays."
+        "Generated from `mainstack_search::api_spec::inventory()` over the pinned OpenSearch REST spec plus mainstack-search manual route overlays."
     );
     println!();
     println!("## Summary");

@@ -6,7 +6,7 @@ use argon2::{
 };
 use bytes::Bytes;
 use http::{header, HeaderMap, HeaderValue, Method, Uri};
-use opensearch_lite::{
+use mainstack_search::{
     api_spec::{classify, AccessClass, Tier},
     http::request::Request,
     security::{authn, authz, Principal, Role, SecurityContext},
@@ -16,7 +16,7 @@ use opensearch_lite::{
 use serde_json::json;
 
 fn password_hash(password: &str) -> String {
-    let salt = SaltString::encode_b64(b"opensearch-lite").unwrap();
+    let salt = SaltString::encode_b64(b"mainstack-search").unwrap();
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .unwrap()
@@ -57,7 +57,7 @@ fn basic(username: &str, password: &str) -> HeaderValue {
 #[test]
 fn non_loopback_requires_tls_and_auth_unless_explicitly_insecure() {
     let error = Config::from_args([
-        "opensearch-lite",
+        "mainstack-search",
         "--listen",
         "0.0.0.0:9200",
         "--allow-nonlocal-listen",
@@ -66,7 +66,7 @@ fn non_loopback_requires_tls_and_auth_unless_explicitly_insecure() {
     assert!(error.contains("configure TLS and --users-file"));
 
     let error = Config::from_args([
-        "opensearch-lite",
+        "mainstack-search",
         "--listen",
         "0.0.0.0:9200",
         "--allow-nonlocal-listen",
@@ -79,7 +79,7 @@ fn non_loopback_requires_tls_and_auth_unless_explicitly_insecure() {
     assert!(error.contains("--users-file"));
 
     let error = Config::from_args([
-        "opensearch-lite",
+        "mainstack-search",
         "--listen",
         "0.0.0.0:9200",
         "--allow-nonlocal-listen",
@@ -90,7 +90,7 @@ fn non_loopback_requires_tls_and_auth_unless_explicitly_insecure() {
     assert!(error.contains("configure TLS"));
 
     let config = Config::from_args([
-        "opensearch-lite",
+        "mainstack-search",
         "--listen",
         "0.0.0.0:9200",
         "--allow-nonlocal-listen",
@@ -159,7 +159,7 @@ async fn missing_basic_auth_fails_before_request_body_handling() {
     assert_eq!(response.status, 401);
     assert_eq!(
         response.headers.get("www-authenticate").map(String::as_str),
-        Some("Basic realm=\"opensearch-lite\"")
+        Some("Basic realm=\"mainstack-search\"")
     );
 }
 
@@ -181,7 +181,7 @@ fn read_only_authorization_allows_read_post_apis_and_blocks_mutations() {
         (Method::POST, "/orders/_field_caps"),
         (Method::POST, "/_search/scroll"),
         (Method::DELETE, "/_search/scroll"),
-        (Method::GET, "/_tasks/opensearch-lite-task:1"),
+        (Method::GET, "/_tasks/mainstack-search-task:1"),
         (Method::GET, "/_cluster/stats"),
         (Method::GET, "/_cat/plugins"),
         (Method::POST, "/_mget"),
@@ -214,7 +214,7 @@ fn read_only_authorization_allows_read_post_apis_and_blocks_mutations() {
         assert_eq!(response.status, 403, "{method} {path}");
     }
 
-    let task_get = classify(&Method::GET, "/_tasks/opensearch-lite-task:1");
+    let task_get = classify(&Method::GET, "/_tasks/mainstack-search-task:1");
     assert_eq!(task_get.tier, Tier::Implemented);
     assert_eq!(task_get.access, AccessClass::Read);
 }
@@ -232,7 +232,7 @@ fn security_and_control_namespaces_are_not_fallback_eligible() {
         "/%5Fsecurity/user",
         "/%5Fsnapshot/repo",
         "/%5Ftasks",
-        "/%5Ftask/opensearch-lite-task%3A1",
+        "/%5Ftask/mainstack-search-task%3A1",
     ] {
         let route = classify(&Method::GET, path);
         assert_ne!(route.tier, Tier::AgentRead, "{path}");

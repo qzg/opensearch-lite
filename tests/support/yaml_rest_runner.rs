@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, path::Path};
 
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Uri};
-use opensearch_lite::{http::request::Request, http::router, responses::Response};
+use mainstack_search::{http::request::Request, http::router, responses::Response};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use url::form_urlencoded;
@@ -83,7 +83,7 @@ struct YamlTest {
 struct Runner<'a> {
     fixture_path: &'a Path,
     test_name: &'a str,
-    state: opensearch_lite::server::AppState,
+    state: mainstack_search::server::AppState,
     last_response: Option<Response>,
     skip_reason: Option<String>,
 }
@@ -297,7 +297,7 @@ impl RestCall {
         Ok(call)
     }
 
-    async fn execute(&self, state: &opensearch_lite::server::AppState) -> Response {
+    async fn execute(&self, state: &mainstack_search::server::AppState) -> Response {
         let mut headers = HeaderMap::new();
         let body = match &self.body {
             Body::Empty => Bytes::new(),

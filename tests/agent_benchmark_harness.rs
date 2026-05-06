@@ -1,4 +1,4 @@
-use opensearch_lite::agent::benchmark::{
+use mainstack_search::agent::benchmark::{
     dry_run_report, fixture_context, grade_agent_output, load_fixtures, parse_candidate_sample,
     rank_candidates, select_candidate_scores, LiveBenchmarkConfig, OPENROUTER_CHAT_COMPLETIONS_URL,
 };

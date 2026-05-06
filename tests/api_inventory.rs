@@ -1,5 +1,5 @@
 use http::Method;
-use opensearch_lite::api_spec::{classify, inventory, AccessClass, Tier};
+use mainstack_search::api_spec::{classify, inventory, AccessClass, Tier};
 
 #[test]
 fn route_inventory_has_required_core_entries() {
@@ -348,7 +348,7 @@ fn encoded_control_namespaces_fail_closed_instead_of_agent_fallback() {
         "/%5Fopendistro/%5Fsecurity/authinfo",
         "/%5Fsecurity/user",
         "/%5Ftasks",
-        "/%5Ftask/opensearch-lite-task%3A1",
+        "/%5Ftask/mainstack-search-task%3A1",
     ] {
         let route = classify(&Method::GET, path);
         assert_ne!(route.tier, Tier::AgentRead, "{path}");
@@ -617,21 +617,21 @@ fn dashboards_metadata_routes_have_specific_read_and_write_classes() {
         (Method::POST, "/_search/scroll", "scroll"),
         (
             Method::GET,
-            "/_search/scroll/opensearch-lite-scroll:1",
+            "/_search/scroll/mainstack-search-scroll:1",
             "scroll",
         ),
         (
             Method::POST,
-            "/_search/scroll/opensearch-lite-scroll:1",
+            "/_search/scroll/mainstack-search-scroll:1",
             "scroll",
         ),
         (Method::DELETE, "/_search/scroll", "clear_scroll"),
         (
             Method::DELETE,
-            "/_search/scroll/opensearch-lite-scroll:1",
+            "/_search/scroll/mainstack-search-scroll:1",
             "clear_scroll",
         ),
-        (Method::GET, "/_tasks/opensearch-lite-task:1", "tasks.get"),
+        (Method::GET, "/_tasks/mainstack-search-task:1", "tasks.get"),
     ] {
         let route = classify(&method, path);
         assert_eq!(route.api_name, api_name, "{method} {path}");
@@ -704,7 +704,7 @@ fn mocked_and_write_fallback_routes_are_explicit_tiers() {
         (Method::POST, "/orders/_cache/clear", "indices.clear_cache"),
         (
             Method::POST,
-            "/_delete_by_query/opensearch-lite-task:1/_rethrottle",
+            "/_delete_by_query/mainstack-search-task:1/_rethrottle",
             "delete_by_query_rethrottle",
         ),
     ] {

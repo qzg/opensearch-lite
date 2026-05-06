@@ -1,7 +1,7 @@
 mod support;
 
 use http::Method;
-use opensearch_lite::{server::AppState, Config};
+use mainstack_search::{server::AppState, Config};
 use serde_json::{json, Value};
 use support::{call, durable_state, ephemeral_state};
 use tokio::time::{sleep, Duration};
@@ -21,7 +21,7 @@ async fn pit_lifecycle_is_process_local_and_opensearch_shaped() {
     assert_eq!(create.status, 200);
     let body = create.body.unwrap();
     let pit_id = body["pit_id"].as_str().unwrap().to_string();
-    assert!(pit_id.starts_with("opensearch-lite-pit:"));
+    assert!(pit_id.starts_with("mainstack-search-pit:"));
     assert_eq!(body["_shards"]["failed"], 0);
     assert_eq!(body["_shards"]["total"], 1);
     assert!(body["creation_time"].as_u64().is_some());
@@ -51,7 +51,7 @@ async fn pit_lifecycle_is_process_local_and_opensearch_shaped() {
     assert!(body["pits"][0]["pit_id"]
         .as_str()
         .unwrap()
-        .starts_with("opensearch-lite-pit:"));
+        .starts_with("mainstack-search-pit:"));
 
     let empty = call(
         &state,

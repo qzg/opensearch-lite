@@ -33,7 +33,7 @@ search, and the documented visualization aggregation subset.
 ## Configuration
 
 ```sh
-opensearch-lite \
+mainstack-search \
   --agent-endpoint https://example.test/v1/chat/completions \
   --agent-model model-name \
   --agent-token-env OPENAI_API_KEY
@@ -50,7 +50,7 @@ or errors.
 Write fallback requires an additional local-development opt-in:
 
 ```sh
-opensearch-lite \
+mainstack-search \
   --agent-endpoint https://example.test/v1/chat/completions \
   --agent-model model-name \
   --agent-token-env OPENAI_API_KEY \
@@ -62,9 +62,9 @@ The ignored local `.env` can hold a concrete OpenAI-compatible backend
 selection. For the current recommended cheap hosted model:
 
 ```sh
-OPENSEARCH_LITE_AGENT_ENDPOINT=https://openrouter.ai/api/v1/chat/completions
-OPENSEARCH_LITE_AGENT_MODEL=deepseek/deepseek-v4-flash
-OPENSEARCH_LITE_AGENT_TOKEN_ENV=OPENROUTER_API_KEY
+MAINSTACK_SEARCH_AGENT_ENDPOINT=https://openrouter.ai/api/v1/chat/completions
+MAINSTACK_SEARCH_AGENT_MODEL=deepseek/deepseek-v4-flash
+MAINSTACK_SEARCH_AGENT_TOKEN_ENV=OPENROUTER_API_KEY
 ```
 
 Run the server from that configuration with:
@@ -74,9 +74,9 @@ set -a
 . ./.env
 set +a
 cargo run -- \
-  --agent-endpoint "$OPENSEARCH_LITE_AGENT_ENDPOINT" \
-  --agent-model "$OPENSEARCH_LITE_AGENT_MODEL" \
-  --agent-token-env "$OPENSEARCH_LITE_AGENT_TOKEN_ENV"
+  --agent-endpoint "$MAINSTACK_SEARCH_AGENT_ENDPOINT" \
+  --agent-model "$MAINSTACK_SEARCH_AGENT_MODEL" \
+  --agent-token-env "$MAINSTACK_SEARCH_AGENT_TOKEN_ENV"
 ```
 
 The live backend tests are intentionally ignored because they use network and
@@ -89,7 +89,7 @@ exercise the real fallback backend:
 set -a
 . ./.env
 set +a
-OPENSEARCH_LITE_LIVE_AGENT_TEST=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_TEST=1 \
 cargo test --test live_agent_backend -- --ignored --test-threads=1
 ```
 

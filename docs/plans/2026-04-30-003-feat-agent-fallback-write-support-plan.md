@@ -3,7 +3,7 @@ title: "feat: Add Write-Capable Agent Fallback"
 type: feat
 status: completed
 date: 2026-04-30
-origin: docs/brainstorms/2026-04-30-opensearch-lite-agent-fallback-write-support-requirements.md
+origin: docs/brainstorms/2026-04-30-mainstack-search-agent-fallback-write-support-requirements.md
 ---
 
 # feat: Add Write-Capable Agent Fallback
@@ -20,7 +20,7 @@ is a first-class implementation stream, but remains opt-in and secret-backed.
 
 ## Problem Frame
 
-The origin requirements define a broader fallback goal: OpenSearch Lite should
+The origin requirements define a broader fallback goal: mainstack-search should
 let a configured model bridge more OpenSearch API gaps in development without
 turning every unsupported or local-inapplicable API into a client-breaking
 error. Planning must preserve the safety constraints from that brainstorm while
@@ -98,7 +98,7 @@ tooling, AE8 fallback memory admission, AE9 container memory fail-fast.
 - Snapshot metadata must not become authoritative when snapshot/log validation
   fails.
 - A hard total process RSS cap remains out of scope; container runtimes enforce
-  hard limits while OpenSearch Lite coordinates with detected limits and rejects
+  hard limits while mainstack-search coordinates with detected limits and rejects
   unsafe data budgets.
 - Live paid model benchmarks must not run in default `cargo test` or normal CI.
 
@@ -143,13 +143,13 @@ tooling, AE8 fallback memory admission, AE9 container memory fail-fast.
 
 ### Institutional Learnings
 
-- `docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md`
+- `docs/solutions/security-issues/mainstack-search-p1-code-review-hardening-2026-04-29.md`
   records that route classification, fallback eligibility, write semantics,
   data exposure, and resource limits are security boundaries.
-- `docs/solutions/security-issues/opensearch-lite-kubernetes-workgroup-security-2026-04-30.md`
+- `docs/solutions/security-issues/mainstack-search-kubernetes-workgroup-security-2026-04-30.md`
   records that fallback runs behind authn/authz and that operator diagnostics
   should be shell/container/Kubernetes friendly without leaking secrets.
-- `docs/solutions/integration-issues/opensearch-lite-dashboards-migration-api-surface-hardening-2026-04-30.md`
+- `docs/solutions/integration-issues/mainstack-search-dashboards-migration-api-surface-hardening-2026-04-30.md`
   records the pattern for bounded runtime state and atomic read-then-write
   planning under storage locks.
 
@@ -405,7 +405,7 @@ budgets and snapshot metadata, and fail fast with actionable remediation.
 - Fail before opening/loading large durable state when the budget is impossible
   unless an explicit override is later chosen during implementation.
 - Emit remediation text that mentions increasing local/container memory,
-  reducing local data, lowering OpenSearch Lite limits, using another data
+  reducing local data, lowering mainstack-search limits, using another data
   directory, or moving to full/cloud/server-hosted OpenSearch.
 
 **Patterns to follow:**
@@ -873,7 +873,7 @@ benign tiers, benchmark workflow, durable metadata, and memory remediation.
 
 ## Sources & References
 
-- **Origin document:** [docs/brainstorms/2026-04-30-opensearch-lite-agent-fallback-write-support-requirements.md](docs/brainstorms/2026-04-30-opensearch-lite-agent-fallback-write-support-requirements.md)
+- **Origin document:** [docs/brainstorms/2026-04-30-mainstack-search-agent-fallback-write-support-requirements.md](docs/brainstorms/2026-04-30-mainstack-search-agent-fallback-write-support-requirements.md)
 - Related docs: `docs/agent-fallback.md`
 - Related docs: `docs/compatibility.md`
 - Related docs: `docs/supported-apis.md`

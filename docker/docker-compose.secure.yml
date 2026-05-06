@@ -1,30 +1,30 @@
 services:
-  opensearch-lite:
+  mainstack-search:
     build:
       context: ..
-      dockerfile: docker/opensearch-lite.Dockerfile
+      dockerfile: docker/mainstack-search.Dockerfile
     command:
       - --listen
       - 0.0.0.0:9200
       - --allow-nonlocal-listen
       - --tls-cert-file
-      - /run/opensearch-lite/tls/tls.crt
+      - /run/mainstack-search/tls/tls.crt
       - --tls-key-file
-      - /run/opensearch-lite/tls/tls.key
+      - /run/mainstack-search/tls/tls.key
       - --tls-ca-file
-      - /run/opensearch-lite/tls/ca.crt
+      - /run/mainstack-search/tls/ca.crt
       - --users-file
-      - /run/opensearch-lite/auth/users.json
+      - /run/mainstack-search/auth/users.json
       - --data-dir
-      - /var/lib/opensearch-lite/data
+      - /var/lib/mainstack-search/data
     ports:
       - "127.0.0.1:9200:9200"
     volumes:
-      - ./security/tls.crt:/run/opensearch-lite/tls/tls.crt:ro
-      - ./security/tls.key:/run/opensearch-lite/tls/tls.key:ro
-      - ./security/ca.crt:/run/opensearch-lite/tls/ca.crt:ro
-      - ./security/users.json:/run/opensearch-lite/auth/users.json:ro
-      - opensearch-lite-data:/var/lib/opensearch-lite/data
+      - ./security/tls.crt:/run/mainstack-search/tls/tls.crt:ro
+      - ./security/tls.key:/run/mainstack-search/tls/tls.key:ro
+      - ./security/ca.crt:/run/mainstack-search/tls/ca.crt:ro
+      - ./security/users.json:/run/mainstack-search/auth/users.json:ro
+      - mainstack-search-data:/var/lib/mainstack-search/data
 
 volumes:
-  opensearch-lite-data:
+  mainstack-search-data:

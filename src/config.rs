@@ -281,7 +281,7 @@ impl Config {
 
     pub fn usage() -> String {
         [
-            "Usage: opensearch-lite [OPTIONS]",
+            "Usage: mainstack-search [OPTIONS]",
             "",
             "Options:",
             "  --listen <addr>                         TCP listen address [default: 127.0.0.1:9200]",
@@ -504,21 +504,21 @@ mod tests {
 
     #[test]
     fn defaults_to_loopback_and_recent_version() {
-        let config = Config::from_args(["opensearch-lite"]).unwrap();
+        let config = Config::from_args(["mainstack-search"]).unwrap();
         assert_eq!(config.listen.to_string(), "127.0.0.1:9200");
         assert_eq!(config.advertised_version, "3.6.0");
     }
 
     #[test]
     fn rejects_non_loopback_without_opt_in() {
-        let error = Config::from_args(["opensearch-lite", "--listen", "0.0.0.0:9200"]).unwrap_err();
+        let error = Config::from_args(["mainstack-search", "--listen", "0.0.0.0:9200"]).unwrap_err();
         assert!(error.contains("--allow-nonlocal-listen"));
     }
 
     #[test]
     fn rejects_agent_http_non_loopback_without_override() {
         let error = Config::from_args([
-            "opensearch-lite",
+            "mainstack-search",
             "--agent-endpoint",
             "http://example.test/v1/chat/completions",
         ])
@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn accepts_loopback_agent_http() {
         let config = Config::from_args([
-            "opensearch-lite",
+            "mainstack-search",
             "--agent-endpoint",
             "http://127.0.0.1:11434/v1/chat/completions",
         ])
@@ -540,7 +540,7 @@ mod tests {
     #[test]
     fn rejects_loopback_looking_dns_names_for_agent_http() {
         let error = Config::from_args([
-            "opensearch-lite",
+            "mainstack-search",
             "--agent-endpoint",
             "http://127.0.0.1.example.test/v1/chat/completions",
         ])

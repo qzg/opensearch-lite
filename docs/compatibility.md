@@ -1,6 +1,6 @@
 # Compatibility
 
-OpenSearch Lite targets recent OpenSearch 3.x HTTP JSON/NDJSON APIs. The initial
+mainstack-search targets recent OpenSearch 3.x HTTP JSON/NDJSON APIs. The initial
 pinned API reference is OpenSearch `3.6.0`, vendored under
 `vendor/opensearch-rest-api-spec`.
 
@@ -12,7 +12,7 @@ pinned API reference is OpenSearch `3.6.0`, vendored under
   single-node development behavior.
 - `mocked`: recognized API whose production behavior is immaterial in the
   local single-node runtime, answered as a benign positive no-op with an
-  explanatory `opensearch_lite` body field.
+  explanatory `mainstack_search` body field.
 - `agent_fallback_eligible`: read-style request that may be answered by the
   configured runtime agent fallback.
 - `agent_write_fallback_eligible`: write-style compatibility route that can
@@ -26,8 +26,8 @@ pinned API reference is OpenSearch `3.6.0`, vendored under
 Best-effort and fallback responses keep normal OpenSearch-shaped JSON bodies.
 They add out-of-body compatibility signals such as:
 
-- `x-opensearch-lite-api`
-- `x-opensearch-lite-tier`
+- `x-mainstack-search-api`
+- `x-mainstack-search-tier`
 
 Use `--strict-compatibility` to make best-effort, mocked, and fallback responses
 fail unless the route appears in `--strict-allowlist`.
@@ -100,7 +100,7 @@ closed per item.
 
 ## Dashboards Compatibility
 
-The Dashboards claim is deliberately narrow: OpenSearch Lite has a
+The Dashboards claim is deliberately narrow: mainstack-search has a
 source-traceable fixture suite for data-view setup, Discover-style searches,
 simple visualization aggregations, and first saved-object migration primitives
 based on the pinned OpenSearch Dashboards 3.7.0 source signals recorded in

@@ -1,8 +1,8 @@
 ---
-title: OpenSearch Lite P1 Code Review Hardening
+title: mainstack-search P1 Code Review Hardening
 date: 2026-04-29
 category: security-issues
-module: opensearch-lite
+module: mainstack-search
 problem_type: security_issue
 component: assistant
 symptoms:
@@ -18,7 +18,7 @@ related_components:
   - tooling
   - testing_framework
 tags:
-  - opensearch-lite
+  - mainstack-search
   - agent-fallback
   - bulk-api
   - write-safety
@@ -26,11 +26,11 @@ tags:
   - durability
 ---
 
-# OpenSearch Lite P1 Code Review Hardening
+# mainstack-search P1 Code Review Hardening
 
 ## Problem
 
-OpenSearch Lite's local compatibility layer needed P1 hardening before it could be trusted as a development substitute for OpenSearch. The risky area was not a single bug; it was a cluster of boundary failures around route classification, agent fallback eligibility, bulk parsing, create semantics, memory admission, and blocking storage work.
+mainstack-search's local compatibility layer needed P1 hardening before it could be trusted as a development substitute for OpenSearch. The risky area was not a single bug; it was a cluster of boundary failures around route classification, agent fallback eligibility, bulk parsing, create semantics, memory admission, and blocking storage work.
 
 ## Symptoms
 
@@ -84,7 +84,7 @@ Mutating API handlers call storage through `run_store`, which uses `tokio::task:
 
 ## Why This Works
 
-The root cause was missing validation at multiple trust boundaries. OpenSearch Lite has to mimic OpenSearch's HTTP surface, but the local implementation cannot let compatibility gaps blur method safety, write semantics, data exposure, or resource limits.
+The root cause was missing validation at multiple trust boundaries. mainstack-search has to mimic OpenSearch's HTTP surface, but the local implementation cannot let compatibility gaps blur method safety, write semantics, data exposure, or resource limits.
 
 The fix makes each boundary explicit:
 
@@ -104,8 +104,8 @@ The fix makes each boundary explicit:
 
 ## Related Issues
 
-- [docs/agent-fallback.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/agent-fallback.md:1)
-- [docs/supported-apis.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/supported-apis.md:22)
-- [docs/compatibility.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/compatibility.md:8)
-- [docs/plans/2026-04-29-001-feat-opensearch-lite-implementation-plan.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/plans/2026-04-29-001-feat-opensearch-lite-implementation-plan.md:573)
-- [OpenSearch Lite Snapshot Reserved Selector Delete Hardening](opensearch-lite-snapshot-reserved-selector-delete-hardening-2026-05-04.md) covers the later snapshot-specific selector/control-token fail-closed boundary.
+- [docs/agent-fallback.md](/home/kiyu/Development/IBM/mainstack-search/docs/agent-fallback.md:1)
+- [docs/supported-apis.md](/home/kiyu/Development/IBM/mainstack-search/docs/supported-apis.md:22)
+- [docs/compatibility.md](/home/kiyu/Development/IBM/mainstack-search/docs/compatibility.md:8)
+- [docs/plans/2026-04-29-001-feat-mainstack-search-implementation-plan.md](/home/kiyu/Development/IBM/mainstack-search/docs/plans/2026-04-29-001-feat-mainstack-search-implementation-plan.md:573)
+- [mainstack-search Snapshot Reserved Selector Delete Hardening](mainstack-search-snapshot-reserved-selector-delete-hardening-2026-05-04.md) covers the later snapshot-specific selector/control-token fail-closed boundary.

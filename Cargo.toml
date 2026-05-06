@@ -1,5 +1,5 @@
 [package]
-name = "opensearch-lite"
+name = "mainstack-search"
 version = "0.1.0"
 edition = "2021"
 description = "Local-only OpenSearch-compatible development server"
@@ -7,11 +7,11 @@ license = "Apache-2.0"
 publish = false
 
 [lib]
-name = "opensearch_lite"
+name = "mainstack_search"
 path = "src/lib.rs"
 
 [[bin]]
-name = "opensearch-lite"
+name = "mainstack-search"
 path = "src/main.rs"
 
 [[bench]]

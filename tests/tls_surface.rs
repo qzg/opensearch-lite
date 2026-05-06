@@ -5,7 +5,7 @@ use argon2::{
     Argon2,
 };
 use http::StatusCode;
-use opensearch_lite::{
+use mainstack_search::{
     security::{self, Role, TlsConfig},
     server::{self, AppState},
     Config,
@@ -14,7 +14,7 @@ use rcgen::{generate_simple_self_signed, CertifiedKey};
 use serde_json::json;
 
 fn password_hash(password: &str) -> String {
-    let salt = SaltString::encode_b64(b"opensearch-lite").unwrap();
+    let salt = SaltString::encode_b64(b"mainstack-search").unwrap();
     Argon2::default()
         .hash_password(password.as_bytes(), &salt)
         .unwrap()
@@ -130,5 +130,5 @@ fn config_validation_rejects_mismatched_certificate_and_key() {
     });
 
     let error = server::validate_config(&config).unwrap_err();
-    assert!(!error.to_string().contains("opensearch-lite-smoke-password"));
+    assert!(!error.to_string().contains("mainstack-search-smoke-password"));
 }

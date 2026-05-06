@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use opensearch_lite::{resources, Config};
+use mainstack_search::{resources, Config};
 use serde_json::json;
 
 #[test]

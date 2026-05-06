@@ -18,7 +18,7 @@ quality, speed, and cost signals, and writes an ignored report. It does not
 print API keys.
 
 ```sh
-OPENSEARCH_LITE_LIVE_AGENT_BENCH=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH=1 \
 OPENROUTER_API_KEY=... \
 ARTIFICIAL_ANALYSIS_API_KEY=... \
 cargo bench --bench agent_fallback_models
@@ -28,9 +28,9 @@ To also run paid prompt fixtures against the top live candidates, opt in
 explicitly:
 
 ```sh
-OPENSEARCH_LITE_LIVE_AGENT_BENCH=1 \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_EXECUTE=1 \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_EXECUTION_MODEL_LIMIT=3 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_EXECUTE=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_EXECUTION_MODEL_LIMIT=3 \
 OPENROUTER_API_KEY=... \
 ARTIFICIAL_ANALYSIS_API_KEY=... \
 cargo bench --bench agent_fallback_models
@@ -40,9 +40,9 @@ To compare a cheaper named shortlist, pass comma-separated OpenRouter model
 IDs. Named runs write `reports/agent-fallback/live-model-shortlist.json`.
 
 ```sh
-OPENSEARCH_LITE_LIVE_AGENT_BENCH=1 \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_EXECUTE=1 \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_MODELS=google/gemini-3-flash-preview,minimax/minimax-m2.7,deepseek/deepseek-v4-flash \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_EXECUTE=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_MODELS=google/gemini-3-flash-preview,minimax/minimax-m2.7,deepseek/deepseek-v4-flash \
 OPENROUTER_API_KEY=... \
 ARTIFICIAL_ANALYSIS_API_KEY=... \
 cargo bench --bench agent_fallback_models
@@ -51,14 +51,14 @@ cargo bench --bench agent_fallback_models
 To benchmark a local or self-hosted OpenAI-compatible endpoint, pass the chat
 completions URL and explicit model IDs. This path does not call OpenRouter or
 Artificial Analysis and writes `reports/agent-fallback/live-model-direct.json`.
-Set `OPENSEARCH_LITE_LIVE_AGENT_BENCH_API_KEY` only when the endpoint requires
+Set `MAINSTACK_SEARCH_LIVE_AGENT_BENCH_API_KEY` only when the endpoint requires
 bearer auth.
 
 ```sh
-OPENSEARCH_LITE_LIVE_AGENT_BENCH=1 \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_EXECUTE=1 \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_ENDPOINT=http://qzg-spark2:8000/v1/chat/completions \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_MODELS=google/gemma-4-26B-A4B-it \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_EXECUTE=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_ENDPOINT=http://qzg-spark2:8000/v1/chat/completions \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_MODELS=google/gemma-4-26B-A4B-it \
 cargo bench --bench agent_fallback_models
 ```
 
@@ -67,10 +67,10 @@ timeout. Tune those when comparing models that spend many tokens on hidden
 reasoning or slow provider paths:
 
 ```sh
-OPENSEARCH_LITE_LIVE_AGENT_BENCH=1 \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_EXECUTE=1 \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_TIMEOUT_SECS=20 \
-OPENSEARCH_LITE_LIVE_AGENT_BENCH_MAX_TOKENS=2400 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_EXECUTE=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_TIMEOUT_SECS=20 \
+MAINSTACK_SEARCH_LIVE_AGENT_BENCH_MAX_TOKENS=2400 \
 OPENROUTER_API_KEY=... \
 ARTIFICIAL_ANALYSIS_API_KEY=... \
 cargo bench --bench agent_fallback_models
@@ -87,7 +87,7 @@ configured runtime model:
 set -a
 . ./.env
 set +a
-OPENSEARCH_LITE_LIVE_AGENT_TEST=1 \
+MAINSTACK_SEARCH_LIVE_AGENT_TEST=1 \
 cargo test --test live_agent_backend -- --ignored --test-threads=1
 ```
 

@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use opensearch_lite::{
+use mainstack_search::{
     search::{search, SearchRequest},
     storage::{Database, IndexMetadata, StoredDocument},
 };
@@ -37,8 +37,8 @@ fn main() {
         )
     });
 
-    let unsorted_gate = gate("OPENSEARCH_LITE_UNSORTED_SCAN_GATE_MS", 1_500);
-    let sorted_gate = gate("OPENSEARCH_LITE_SORTED_SCAN_GATE_MS", 1_500);
+    let unsorted_gate = gate("MAINSTACK_SEARCH_UNSORTED_SCAN_GATE_MS", 1_500);
+    let sorted_gate = gate("MAINSTACK_SEARCH_SORTED_SCAN_GATE_MS", 1_500);
     println!(
         "search_scan: unsorted_50={}ms gate={}ms sorted_20={}ms gate={}ms",
         unsorted.as_millis(),

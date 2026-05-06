@@ -102,7 +102,7 @@ pub fn tool_catalog(api_name: &str, write_enabled: bool) -> Value {
         json!({
             "name": "analyze_text",
             "mode": "read",
-            "description": "Tokenize text with OpenSearch Lite's development-scale standard, simple, whitespace, or keyword analyzer behavior."
+            "description": "Tokenize text with mainstack-search's development-scale standard, simple, whitespace, or keyword analyzer behavior."
         }),
         json!({
             "name": "explain_match",

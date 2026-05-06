@@ -255,7 +255,7 @@ fn replay_from(
         match replay_record(trimmed, &mut pending_transactions, db, &mut validate) {
             Ok(()) => {}
             Err(error) if !ended_with_newline && reader.fill_buf()?.is_empty() => {
-                eprintln!("opensearch-lite ignored torn final mutation record: {error}");
+                eprintln!("mainstack-search ignored torn final mutation record: {error}");
             }
             Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidData, error)),
         }

@@ -9,14 +9,14 @@ Reference clone: `../OpenSearch-Dashboards`
 
 ## Purpose
 
-OpenSearch Dashboards is a high-value guide for the next OpenSearch Lite API
+OpenSearch Dashboards is a high-value guide for the next mainstack-search API
 tranches because it exercises the APIs that a real OpenSearch application uses
 to boot, store saved objects, create data views, import sample data, and run
 basic exploration workflows.
 
 This is not a commitment to implement every Dashboards plugin endpoint. The
 useful signal is which OpenSearch REST APIs must behave deterministically before
-Dashboards can run against OpenSearch Lite without relying on runtime agent
+Dashboards can run against mainstack-search without relying on runtime agent
 fallback.
 
 ## Primary Source Paths
@@ -86,7 +86,7 @@ Coverage is source-traceable and fixture-level only:
 
 This does not yet claim full live OpenSearch Dashboards process compatibility,
 but the first Docker-based smoke has now booted Dashboards against
-OpenSearch Lite.
+mainstack-search.
 
 ## Live Docker Smoke: 2026-04-30
 
@@ -102,7 +102,7 @@ docker run --rm \
   opensearchproject/opensearch-dashboards:3.6.0
 ```
 
-`9201` was a local logging proxy to OpenSearch Lite on `127.0.0.1:9200`.
+`9201` was a local logging proxy to mainstack-search on `127.0.0.1:9200`.
 
 Result: OpenSearch Dashboards `3.6.0` reached green status with security
 disabled. The smoke also passed data-view field discovery, a saved-object
@@ -136,7 +136,7 @@ Observed OpenSearch API traffic during the successful smoke:
 ## Live Saved-Object Workflow Smoke: 2026-05-01
 
 The next Docker smoke reused OpenSearch Dashboards `3.6.0`, a local
-loopback-rewriting proxy, and the patched OpenSearch Lite binary. Dashboards
+loopback-rewriting proxy, and the patched mainstack-search binary. Dashboards
 again reached green status with saved-object migrations complete.
 
 The smoke then seeded an `orders` index, created saved objects through
@@ -149,7 +149,7 @@ Result: export returned `exportedCount: 4`, `missingRefCount: 0`, and no
 `missingReferences`. Import returned `success: true` and `successCount: 4`.
 The live gap found during the first workflow attempt was encoded saved-object
 IDs: Dashboards writes path IDs such as `index-pattern%3Aorders`, while
-reference lookups use raw IDs such as `index-pattern:orders`. OpenSearch Lite
+reference lookups use raw IDs such as `index-pattern:orders`. mainstack-search
 now percent-decodes document ID path parameters for document, source, and
 explain APIs so saved-object reference lookups resolve. Durable startup also
 repairs legacy `.kibana*` and `.opensearch_dashboards*` documents that were
@@ -164,7 +164,7 @@ Observed additional OpenSearch API traffic during this workflow:
 - `POST /_mget`
 - `POST /_bulk?refresh=wait_for`
 
-The same saved-object import was then run against a durable OpenSearch Lite
+The same saved-object import was then run against a durable mainstack-search
 data directory. After a clean Lite restart, OpenSearch Dashboards again reached
 green status, saved-object migrations completed, and
 `GET /api/saved_objects/dashboard/orders-dashboard` returned the imported
@@ -203,7 +203,7 @@ data view with migration version `7.6.0`.
 Live migration found two response-shape gaps that were promoted to fixtures:
 
 - Dashboards URL-encodes synthetic task IDs, polling
-  `GET /_tasks/opensearch-lite-task%3A1`. `tasks.get` now decodes the path
+  `GET /_tasks/mainstack-search-task%3A1`. `tasks.get` now decodes the path
   parameter before looking up the completed local task.
 - Dashboards also URL-encodes path-form scroll IDs and may request one more
   scroll page after the first page already returned all hits. Path-form scroll
@@ -213,17 +213,17 @@ Live migration found two response-shape gaps that were promoted to fixtures:
 Observed additional OpenSearch API traffic during the older-index migration:
 
 - `POST /_reindex?refresh=true&wait_for_completion=false`
-- `GET /_tasks/opensearch-lite-task%3A1`
+- `GET /_tasks/mainstack-search-task%3A1`
 - `POST /.opensearch_dashboards_1/_search?scroll=15m`
 - `POST /_bulk`
-- `GET /_search/scroll/opensearch-lite-scroll%3A2?scroll=15m`
-- `DELETE /_search/scroll/opensearch-lite-scroll%3A2`
+- `GET /_search/scroll/mainstack-search-scroll%3A2?scroll=15m`
+- `DELETE /_search/scroll/mainstack-search-scroll%3A2`
 - `POST /_aliases`
 
 ## Priority 2: Saved Object Migration Compatibility
 
 Dashboards saved-object migrations are the deepest compatibility driver. A fresh
-OpenSearch Lite data directory may avoid some migration paths, but development
+mainstack-search data directory may avoid some migration paths, but development
 users will eventually restart with existing `.opensearch_dashboards*` indices or
 import saved objects.
 
@@ -260,7 +260,7 @@ management flows.
 ## Live Browser Workflow Smoke: 2026-05-01
 
 The browser-driven smoke reused OpenSearch Dashboards `3.6.0`, the local
-loopback-rewriting proxy, and durable OpenSearch Lite state under
+loopback-rewriting proxy, and durable mainstack-search state under
 `opensearchDashboards.index=.opensearch_dashboards`.
 
 Result: Dashboards loaded Home without unhandled startup rejections, created an
@@ -273,14 +273,14 @@ Live browser traffic found three route/shape gaps that were promoted to local
 implementation and tests:
 
 - Dashboards still probes `GET /_plugins/_security/api/account` even with the
-  Dashboards security plugin disabled. OpenSearch Lite now returns narrow
+  Dashboards security plugin disabled. mainstack-search now returns narrow
   mocked local principal metadata for that exact route while keeping the rest
   of the security namespace closed.
 - Dashboards probes `GET /_plugins/_query/_datasources` during startup and
-  management page loads. OpenSearch Lite now returns a mocked empty
+  management page loads. mainstack-search now returns a mocked empty
   direct-query data-source list for that exact read route.
 - Index-pattern creation calls `GET /_resolve/index/*` before field caps.
-  OpenSearch Lite now returns matching local indices and aliases with
+  mainstack-search now returns matching local indices and aliases with
   dot-prefixed local system indices hidden unless `expand_wildcards=all` or
   `hidden` is requested.
 
@@ -350,7 +350,7 @@ scope.
   bundle enables those Dashboards plugins.
 - The archiver package uses snapshot APIs to avoid deleting indices that are
   part of snapshots. This is mostly test/dev tooling for Dashboards itself, not
-  a first-pass requirement for running applications against OpenSearch Lite.
+  a first-pass requirement for running applications against mainstack-search.
 
 ## Suggested Next Tranche
 

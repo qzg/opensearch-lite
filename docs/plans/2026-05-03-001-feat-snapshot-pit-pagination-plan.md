@@ -20,7 +20,7 @@ bounded frozen database views and exposes chunking primarily through PIT plus
 ## Problem Frame
 
 Snapshot APIs, PIT, and large-result access are currently visible API gaps in the
-coverage report. OpenSearch Lite already has readable durable recovery snapshots
+coverage report. mainstack-search already has readable durable recovery snapshots
 and bounded scroll state, but it does not yet expose OpenSearch-shaped snapshot
 repository APIs, PIT lifecycle APIs, or stable sorted cursors for deep pagination.
 
@@ -84,7 +84,7 @@ repository APIs, PIT lifecycle APIs, or stable sorted cursors for deep paginatio
   plus `search_after`, unless a caller needs bucket paging first.
 - Async search partial-result polling: plan separately if large-running queries
   become more important than large-result pagination.
-- ISM plugin compatibility: add a separate tranche if Dashboards or Axon needs
+- ISM plugin compatibility: add a separate tranche if Dashboards or Mainstack needs
   `/_plugins/_ism/...` behavior beyond fail-closed route safety.
 
 ---
@@ -118,14 +118,14 @@ repository APIs, PIT lifecycle APIs, or stable sorted cursors for deep paginatio
 
 ### Institutional Learnings
 
-- `docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md`
+- `docs/solutions/security-issues/mainstack-search-p1-code-review-hardening-2026-04-29.md`
   records that known mutating/control APIs must fail closed before any fallback.
-- `docs/solutions/security-issues/opensearch-lite-agent-write-fallback-durable-replay-hardening-2026-04-30.md`
+- `docs/solutions/security-issues/mainstack-search-agent-write-fallback-durable-replay-hardening-2026-04-30.md`
   records that snapshot/log metadata must not become authoritative when recovery
   validation fails, and crash-window tests are required for snapshot work.
-- `docs/solutions/integration-issues/opensearch-lite-dashboards-migration-api-surface-hardening-2026-04-30.md`
+- `docs/solutions/integration-issues/mainstack-search-dashboards-migration-api-surface-hardening-2026-04-30.md`
   records that runtime cursors need explicit count, TTL, and byte budgets.
-- `docs/solutions/security-issues/opensearch-lite-kubernetes-workgroup-security-2026-04-30.md`
+- `docs/solutions/security-issues/mainstack-search-kubernetes-workgroup-security-2026-04-30.md`
   records that route inventory access classes and authz checks must remain the
   guard before deterministic handlers and fallback.
 
@@ -183,7 +183,7 @@ repository APIs, PIT lifecycle APIs, or stable sorted cursors for deep paginatio
 - Should Git back snapshot repositories? No. Git is useful as export/sync, but
   not as the runtime repository implementation.
 - Should the repository catalog be Iceberg-compatible? No. Borrow manifest ideas
-  but keep the contract native to OpenSearch Lite.
+  but keep the contract native to mainstack-search.
 - Should `_search` stream hits over HTTP? No. Use PIT plus `search_after` and
   scroll for OpenSearch compatibility; defer custom streaming.
 - Should PIT be durable? No. Runtime-only PIT matches OpenSearch reader-context
@@ -970,10 +970,10 @@ management subset that lands with Phase 1.
 
 ## Sources & References
 
-- Related requirements: `docs/brainstorms/2026-04-30-opensearch-lite-agent-fallback-write-support-requirements.md`
+- Related requirements: `docs/brainstorms/2026-04-30-mainstack-search-agent-fallback-write-support-requirements.md`
 - Related plan: `docs/plans/2026-04-30-003-feat-agent-fallback-write-support-plan.md`
-- Related learning: `docs/solutions/security-issues/opensearch-lite-agent-write-fallback-durable-replay-hardening-2026-04-30.md`
-- Related learning: `docs/solutions/integration-issues/opensearch-lite-dashboards-migration-api-surface-hardening-2026-04-30.md`
+- Related learning: `docs/solutions/security-issues/mainstack-search-agent-write-fallback-durable-replay-hardening-2026-04-30.md`
+- Related learning: `docs/solutions/integration-issues/mainstack-search-dashboards-migration-api-surface-hardening-2026-04-30.md`
 - Related code: `src/storage/snapshot.rs`
 - Related code: `src/runtime.rs`
 - Related code: `src/search/evaluator.rs`

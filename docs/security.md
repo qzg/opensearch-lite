@@ -1,6 +1,6 @@
 # Security
 
-OpenSearch Lite has three operating postures:
+mainstack-search has three operating postures:
 
 - Loopback local development: HTTP and no authentication are allowed when the
   listener is bound to a loopback address.
@@ -17,13 +17,13 @@ security management APIs remain unsupported.
 ## Server Flags
 
 ```sh
-opensearch-lite \
+mainstack-search \
   --listen 0.0.0.0:9200 \
   --allow-nonlocal-listen \
-  --tls-cert-file /run/opensearch-lite/tls/tls.crt \
-  --tls-key-file /run/opensearch-lite/tls/tls.key \
-  --tls-ca-file /run/opensearch-lite/tls/ca.crt \
-  --users-file /run/opensearch-lite/auth/users.json
+  --tls-cert-file /run/mainstack-search/tls/tls.crt \
+  --tls-key-file /run/mainstack-search/tls/tls.key \
+  --tls-ca-file /run/mainstack-search/tls/ca.crt \
+  --users-file /run/mainstack-search/auth/users.json
 ```
 
 `--tls-cert-file` and `--tls-key-file` configure the REST server certificate.
@@ -36,7 +36,7 @@ this tranche.
 When Linux cgroup memory limits are visible, startup and `--validate-config`
 compare that budget with the detected container limit after reserving runtime
 overhead. If the configured data budget or snapshot metadata cannot fit safely,
-OpenSearch Lite fails before loading the full data set and prints remediation:
+mainstack-search fails before loading the full data set and prints remediation:
 increase local/container memory, reduce local data, lower `--memory-limit`, use
 a smaller `--data-dir`, or move the workload to full OpenSearch locally,
 server-hosted OpenSearch, or cloud-hosted OpenSearch.
@@ -44,13 +44,13 @@ server-hosted OpenSearch, or cloud-hosted OpenSearch.
 Use `--validate-config` to check mounted files without serving traffic:
 
 ```sh
-opensearch-lite \
+mainstack-search \
   --listen 0.0.0.0:9200 \
   --allow-nonlocal-listen \
-  --tls-cert-file /run/opensearch-lite/tls/tls.crt \
-  --tls-key-file /run/opensearch-lite/tls/tls.key \
-  --tls-ca-file /run/opensearch-lite/tls/ca.crt \
-  --users-file /run/opensearch-lite/auth/users.json \
+  --tls-cert-file /run/mainstack-search/tls/tls.crt \
+  --tls-key-file /run/mainstack-search/tls/tls.key \
+  --tls-ca-file /run/mainstack-search/tls/ca.crt \
+  --users-file /run/mainstack-search/auth/users.json \
   --validate-config
 ```
 
@@ -93,28 +93,28 @@ malformed JSON, and invalid PHC hashes fail startup validation.
 From a running container:
 
 ```sh
-docker exec opensearch-lite \
-  opensearch-lite \
+docker exec mainstack-search \
+  mainstack-search \
     --listen 0.0.0.0:9200 \
     --allow-nonlocal-listen \
-    --tls-cert-file /run/opensearch-lite/tls/tls.crt \
-    --tls-key-file /run/opensearch-lite/tls/tls.key \
-    --tls-ca-file /run/opensearch-lite/tls/ca.crt \
-    --users-file /run/opensearch-lite/auth/users.json \
+    --tls-cert-file /run/mainstack-search/tls/tls.crt \
+    --tls-key-file /run/mainstack-search/tls/tls.key \
+    --tls-ca-file /run/mainstack-search/tls/ca.crt \
+    --users-file /run/mainstack-search/auth/users.json \
     --validate-config
 ```
 
 From Kubernetes:
 
 ```sh
-kubectl exec deploy/opensearch-lite -- \
-  opensearch-lite \
+kubectl exec deploy/mainstack-search -- \
+  mainstack-search \
     --listen 0.0.0.0:9200 \
     --allow-nonlocal-listen \
-    --tls-cert-file /run/opensearch-lite/tls/tls.crt \
-    --tls-key-file /run/opensearch-lite/tls/tls.key \
-    --tls-ca-file /run/opensearch-lite/tls/ca.crt \
-    --users-file /run/opensearch-lite/auth/users.json \
+    --tls-cert-file /run/mainstack-search/tls/tls.crt \
+    --tls-key-file /run/mainstack-search/tls/tls.key \
+    --tls-ca-file /run/mainstack-search/tls/ca.crt \
+    --users-file /run/mainstack-search/auth/users.json \
     --validate-config
 ```
 

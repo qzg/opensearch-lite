@@ -26,7 +26,7 @@ fn guard_request(state: &AppState, request: &Request) -> Result<(), Response> {
             if !host_header_is_loopback(host) {
                 return Err(open_search_error(
                     403,
-                    "opensearch_lite_host_rejected_exception",
+                    "mainstack_search_host_rejected_exception",
                     "request Host is not loopback",
                     Some("Use localhost or 127.0.0.1 when calling this local-only server."),
                 ));
@@ -56,7 +56,7 @@ fn guard_request(state: &AppState, request: &Request) -> Result<(), Response> {
             if !write_content_type_is_json(content_type) {
                 return Err(open_search_error(
                     415,
-                    "opensearch_lite_content_type_exception",
+                    "mainstack_search_content_type_exception",
                     "write requests with bodies must use a JSON or NDJSON content type",
                     Some("Set Content-Type to application/json or application/x-ndjson."),
                 ));
@@ -90,9 +90,9 @@ fn write_content_type_is_json(content_type: &str) -> bool {
 fn cross_site_error() -> Response {
     open_search_error(
         403,
-        "opensearch_lite_cross_site_request_exception",
+        "mainstack_search_cross_site_request_exception",
         "cross-site browser request rejected",
-        Some("Call OpenSearch Lite from local tooling, or remove browser cross-site headers."),
+        Some("Call mainstack-search from local tooling, or remove browser cross-site headers."),
     )
 }
 
