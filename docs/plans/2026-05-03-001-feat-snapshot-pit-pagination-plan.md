@@ -1,8 +1,10 @@
 ---
 title: "feat: Add Snapshot Repository, PIT, and Cursor Pagination"
 type: feat
-status: active
+status: completed
 date: 2026-05-03
+completed: 2026-05-06
+superseded_by: docs/plans/2026-05-06-001-feat-snapshot-restore-plan.md
 ---
 
 # feat: Add Snapshot Repository, PIT, and Cursor Pagination
@@ -14,6 +16,12 @@ PIT contexts, and OpenSearch-compatible chunked result access. The implementatio
 uses a native manifest/blob catalog rather than Git or Iceberg, then builds PIT on
 bounded frozen database views and exposes chunking primarily through PIT plus
 `search_after`, with true HTTP response streaming left as a deliberate follow-up.
+
+**Status update, 2026-05-06:** The repository-management, PIT, `search_after`,
+streaming-boundary, and reserved-name safety work from this tranche has landed.
+Snapshot restore remains intentionally unsupported in code and is split into the
+focused follow-up plan at
+`docs/plans/2026-05-06-001-feat-snapshot-restore-plan.md`.
 
 ---
 
@@ -55,7 +63,7 @@ repository APIs, PIT lifecycle APIs, or stable sorted cursors for deep paginatio
   sort values in returned hits and stable tie-breaking.
 - R9. Preserve existing scroll behavior and document when clients should use
   scroll, PIT plus `search_after`, composite aggregation pagination, or a future
-  Lite-specific export stream.
+  mainstack-search-specific export stream.
 - R10. Update API coverage, compatibility, and fallback boundary documentation so
   the new deterministic surfaces and remaining unsupported surfaces are visible.
 
@@ -66,20 +74,22 @@ repository APIs, PIT lifecycle APIs, or stable sorted cursors for deep paginatio
 - Do not implement a Git-backed snapshot repository as the core repository engine.
   Git may become an export/sync option later.
 - Do not implement an Iceberg-compatible catalog in this tranche. The repository
-  catalog may borrow manifest-generation ideas, but it should stay OpenSearch
-  Lite native.
+  catalog may borrow manifest-generation ideas, but it should stay native to
+  mainstack-search.
 - Do not implement distributed shard-level snapshot semantics, remote repositories,
   searchable snapshots, repository plugins, or Lucene segment-level restore.
 - Do not make PIT durable across server restarts. OpenSearch PIT contexts are
-  runtime reader contexts, so process-local PITs are acceptable for Lite.
+  runtime reader contexts, so process-local PITs are acceptable for
+  mainstack-search.
 - Do not add general chunked HTTP streaming to `_search`. OpenSearch-compatible
   chunking should use scroll or PIT plus `search_after`.
 - Do not expand Index State Management plugin behavior in this tranche.
 
 ### Deferred to Follow-Up Work
 
-- Lite-specific NDJSON export endpoint: add only if a real caller needs one long
-  streamed response rather than OpenSearch-compatible cursor paging.
+- mainstack-search-specific NDJSON export endpoint: add only if a real caller
+  needs one long streamed response rather than OpenSearch-compatible cursor
+  paging.
 - Composite aggregation pagination with `after_key`: plan separately after PIT
   plus `search_after`, unless a caller needs bucket paging first.
 - Async search partial-result polling: plan separately if large-running queries
@@ -168,8 +178,8 @@ repository APIs, PIT lifecycle APIs, or stable sorted cursors for deep paginatio
 - Implement `search_after` before claiming useful PIT support: PIT without
   stable sorted cursors is mostly a lifecycle stub.
 - Treat streaming as a product boundary: OpenSearch-compatible "chunks" are
-  paged responses; true chunked responses should be an explicit Lite extension
-  with a separate endpoint and response abstraction.
+  paged responses; true chunked responses should be an explicit
+  mainstack-search extension with a separate endpoint and response abstraction.
 - Treat snapshot restore as a later state-transition tranche, not a prerequisite
   for PIT pagination: the first user-visible large-read outcome is PIT search
   plus `search_after`.
@@ -642,9 +652,10 @@ serve deep pagination clients.
 - Include each hit's full effective `sort` array in responses when sort is
   requested.
 - Apply `search_after` after sorting and before result `size` truncation.
-- For PIT searches, append a deterministic Lite `_shard_doc` tie-breaker to the
-  effective sort tuple when the caller has not supplied a unique resumable
-  tie-breaker; include that value in each hit's returned `sort` array.
+- For PIT searches, append a deterministic mainstack-search `_shard_doc`
+  tie-breaker to the effective sort tuple when the caller has not supplied a
+  unique resumable tie-breaker; include that value in each hit's returned `sort`
+  array.
 - Validate `search_after` array length/type against the full effective sort
   tuple and return parse errors for unsupported modes.
 
@@ -676,8 +687,8 @@ changing the evaluator sorting pipeline.
 - U8. **Streaming Boundary and Optional Response Abstraction Prep**
 
 **Goal:** Document and enforce the streaming boundary, while preparing only the
-minimal response abstraction needed if a future Lite-specific stream endpoint is
-approved.
+minimal response abstraction needed if a future mainstack-search-specific stream
+endpoint is approved.
 
 **Requirements:** R9, R10
 
@@ -821,7 +832,7 @@ management subset that lands with Phase 1.
   runtime state, search evaluator, and resource limits.
 - **Error propagation:** Repository corruption, invalid manifests, unsupported
   restore options, expired PIT IDs, and invalid `search_after` inputs must return
-  OpenSearch-shaped errors with actionable Lite hints.
+  OpenSearch-shaped errors with actionable mainstack-search hints.
 - **State lifecycle risks:** Snapshot restore can replace or merge durable state;
   it needs candidate validation and durable replay coverage. PIT can retain large
   frozen views; it needs TTL, count, and byte budgets.

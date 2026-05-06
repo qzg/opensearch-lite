@@ -1,22 +1,22 @@
 ---
 title: "handoff: API Surface Tranche Progress"
 type: handoff
-status: active
+status: completed
 date: 2026-05-03
+completed: 2026-05-06
 ---
 
 # handoff: API Surface Tranche Progress
 
-## Current Branch
+## Current State
 
-`codex/saved-object-management-tranche`
-
-The implementation progress through the latest review fixes is committed in:
+This handoff is complete and has been superseded by committed follow-up work on
+`main`. The implementation progress through the original handoff landed in:
 
 - `7a51b2c fix(api): harden snapshot and cursor edge cases`
 
-This handoff file is intended to be committed separately after that implementation
-commit.
+The rename and later safety follow-ups now live on `main`; this file is kept as
+historical context for the API surface tranche.
 
 ## What Landed
 
@@ -55,9 +55,10 @@ The default parallel `cargo test` was terminated during concurrent rustc test
 compilation with SIGTERM. Re-running with `CARGO_BUILD_JOBS=1` completed the full
 suite successfully.
 
-## Open Review Recommendation
+## Completed Follow-Up: Reserved Snapshot Names
 
-Reserved snapshot names remain a P2 recommendation, not yet fixed:
+The prior P2 recommendation below has been implemented and covered by
+regression tests:
 
 - Reject literal repository/snapshot names `_all` and `all` in
   `validate_name`.
@@ -68,19 +69,24 @@ Reserved snapshot names remain a P2 recommendation, not yet fixed:
   `GET /_snapshot/_all` and `GET /_snapshot/local/_all` still expand as
   selectors.
 
-Recommendation: fix this next. It is narrow and prevents targeted operations
-from unexpectedly expanding to every repository or snapshot.
+Additional destructive-route coverage now verifies rejected `DELETE` requests
+preserve existing repositories/snapshots, encoded reserved tokens are rejected,
+and malformed `_restore`/`_clone` operation tokens stay in unsupported admin
+routes instead of generic snapshot creation. See:
+
+- `tests/snapshot_surface.rs`
+- `src/snapshots/service.rs`
+- `docs/solutions/security-issues/mainstack-search-snapshot-reserved-selector-delete-hardening-2026-05-04.md`
 
 ## Suggested Next API Tranche
 
-1. Fix reserved snapshot names.
-2. Add snapshot restore planning or a minimal fail-closed restore test matrix,
-   depending on whether restore is still intended for this tranche.
-3. Expand large-result compatibility only where callers need it:
+1. Use `docs/plans/2026-05-06-001-feat-snapshot-restore-plan.md` for the next
+   restore-specific tranche.
+2. Expand large-result compatibility only where callers need it:
    PIT plus `search_after` is now the preferred OpenSearch-shaped path; true
    HTTP response streaming should stay deferred unless a concrete caller needs a
-   Lite-specific export endpoint.
-4. Continue API inventory visualization/coverage work by grouping unsupported
+   mainstack-search-specific export endpoint.
+3. Continue API inventory visualization/coverage work by grouping unsupported
    APIs into:
    control/admin safety boundaries, distributed-cluster features, plugin surfaces,
    Lucene/search parity gaps, and unsupported mutation families.
