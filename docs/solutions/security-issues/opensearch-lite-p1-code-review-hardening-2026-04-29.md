@@ -108,3 +108,4 @@ The fix makes each boundary explicit:
 - [docs/supported-apis.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/supported-apis.md:22)
 - [docs/compatibility.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/compatibility.md:8)
 - [docs/plans/2026-04-29-001-feat-opensearch-lite-implementation-plan.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/plans/2026-04-29-001-feat-opensearch-lite-implementation-plan.md:573)
+- [OpenSearch Lite Snapshot Reserved Selector Delete Hardening](opensearch-lite-snapshot-reserved-selector-delete-hardening-2026-05-04.md) covers the later snapshot-specific selector/control-token fail-closed boundary.

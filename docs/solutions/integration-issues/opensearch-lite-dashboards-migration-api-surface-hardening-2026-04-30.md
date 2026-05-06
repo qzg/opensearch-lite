@@ -96,6 +96,7 @@ This also keeps runtime agent fallback out of the story. Known mutating or wrong
 
 - [OpenSearch Lite P1 Code Review Hardening](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md:1) has moderate overlap around route classification, fallback safety, and storage validation. This document covers the later Dashboards migration API tranche.
 - [OpenSearch Lite Kubernetes Workgroup Security](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/solutions/security-issues/opensearch-lite-kubernetes-workgroup-security-2026-04-30.md:1) is adjacent because it also treats route inventory and authorization as security boundaries.
+- [OpenSearch Lite Snapshot Reserved Selector Delete Hardening](../security-issues/opensearch-lite-snapshot-reserved-selector-delete-hardening-2026-05-04.md) is adjacent because it applies exact-shape fail-closed handling to snapshot selector/control-token paths.
 - [Dashboards gap analysis](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/opensearch-dashboards-gap-analysis.md:89) tracks the application-driven API surface that motivated these migration handlers.
 - [Supported APIs](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/supported-apis.md:39) documents the deterministic API surface after this tranche.
 - No related GitHub issues were found by `gh issue list` for this tranche.

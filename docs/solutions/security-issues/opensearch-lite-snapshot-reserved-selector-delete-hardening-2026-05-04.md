@@ -1,6 +1,7 @@
 ---
 title: OpenSearch Lite Snapshot Reserved Selector Delete Hardening
 date: 2026-05-04
+last_updated: 2026-05-04
 category: security-issues
 module: opensearch-lite snapshot APIs
 problem_type: security_issue
@@ -35,6 +36,11 @@ names during create operations, but destructive delete paths still reused the
 same selector expansion helper as read/list APIs, so reserved tokens could still
 fan out to every repository or snapshot.
 
+The same route-shape issue appeared again with malformed snapshot operation
+tokens: `POST /_snapshot/local/_restore` and `PUT /_snapshot/local/_clone` could
+be treated as generic snapshot create requests unless the classifier reserved
+those operation-token shapes before the name-slot route.
+
 ## Symptoms
 
 - `PUT /_snapshot/_all` and `PUT /_snapshot/local/all` returned validation
@@ -56,6 +62,10 @@ fan out to every repository or snapshot.
   need exact caller intent before side effects.
 - Testing only create and read behavior made the change look complete even
   though the destructive API family still had the original behavior.
+- Covering only the canonical restore route was still too narrow. A later review
+  showed malformed `_restore` and `_clone` paths in the snapshot-name slot could
+  reach generic snapshot creation until route classification reserved them first
+  (session history).
 
 ## Solution
 
@@ -171,6 +181,12 @@ method-aware. Read/list APIs can continue to be permissive selectors, while
 destructive APIs must name concrete repositories or snapshots and must pass the
 same reserved-name validation as creation.
 
+Reserving malformed `_restore` and `_clone` route shapes before the generic
+snapshot-name arm keeps unsupported operation tokens in the admin/fail-closed
+path. Rejecting underscore-prefixed snapshot names gives the service layer a
+second guardrail if future routes accidentally pass operation tokens through
+literal-name validation.
+
 ## Prevention
 
 - Treat route method and operation type as part of the validation policy. A token
@@ -179,6 +195,9 @@ same reserved-name validation as creation.
   interpret those names, not just create/update paths.
 - Reserve operation-token shapes in the route classifier before generic
   name-slot arms, and include percent-encoded token forms in the regression.
+- For unsupported snapshot/control operation tokens, inventory tests should
+  assert both `Tier::Unsupported` and `AccessClass::Admin` so the route cannot
+  drift into runtime fallback eligibility.
 - Regression tests for mutating selector boundaries should assert both the error
   response and the absence of side effects.
 - Include encoded and mixed-list forms in destructive-route tests because the
@@ -188,3 +207,5 @@ same reserved-name validation as creation.
 
 - [OpenSearch Lite P1 Code Review Hardening](opensearch-lite-p1-code-review-hardening-2026-04-29.md)
 - [OpenSearch Lite Agent Write Fallback And Durable Replay Hardening](opensearch-lite-agent-write-fallback-durable-replay-hardening-2026-04-30.md)
+- [OpenSearch Lite Kubernetes Workgroup Security](opensearch-lite-kubernetes-workgroup-security-2026-04-30.md)
+- [OpenSearch Lite Dashboards Migration API Surface Hardening](../integration-issues/opensearch-lite-dashboards-migration-api-surface-hardening-2026-04-30.md)

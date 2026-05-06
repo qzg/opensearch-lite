@@ -120,6 +120,7 @@ OPENSEARCH_LITE_SECURE_SMOKE=1 scripts/run-java-client-smoke.sh
 ## Related Issues
 
 - [OpenSearch Lite P1 Code Review Hardening](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/solutions/security-issues/opensearch-lite-p1-code-review-hardening-2026-04-29.md:1) has moderate overlap: both documents treat route classification and agent fallback as security boundaries, but this doc covers the deployment posture, TLS/auth, and shell-operable diagnostics tranche.
+- [OpenSearch Lite Snapshot Reserved Selector Delete Hardening](opensearch-lite-snapshot-reserved-selector-delete-hardening-2026-05-04.md) applies the same route-inventory and admin fail-closed boundary to snapshot selector/control-token APIs.
 - [docs/security.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/security.md:1)
 - [docs/kubernetes-security.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/kubernetes-security.md:1)
 - [docs/agent-fallback.md](/Users/kiyu.gabriel/Development/cqlite-server/opensearch-lite/docs/agent-fallback.md:1)
