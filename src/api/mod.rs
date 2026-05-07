@@ -36,7 +36,7 @@ use crate::{
     search::{self as search_engine, dsl::SearchRequest},
     security,
     server::AppState,
-    snapshots::SnapshotService,
+    snapshots::{parse_restore_request, validate_name as validate_snapshot_name, SnapshotService},
     storage::{
         mutation_log::Mutation, Database, Store, StoreError, StoreResult, WriteOperation,
         WriteOutcome,
@@ -107,7 +107,10 @@ async fn handle_implemented(state: AppState, request: Request, api_name: &str) -
     if pit_path(&parts) {
         return handle_pit(&state, &request, &parts);
     }
-    if parts.first() == Some(&"_snapshot") {
+    if parts
+        .first()
+        .is_some_and(|part| decode_path_param(part) == "_snapshot")
+    {
         return handle_snapshot(&state, &request, &parts).await;
     }
     if matches!(parts.as_slice(), ["_bulk"] | [_, "_bulk"]) {
@@ -554,7 +557,7 @@ fn agent_write_scope(
 
 async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) -> Response {
     match (request.method.clone(), parts) {
-        (Method::GET, ["_snapshot"]) => {
+        (Method::GET, [_]) => {
             match run_snapshot(state.snapshots.clone(), |snapshots| {
                 snapshots.get_repositories(None)
             })
@@ -564,7 +567,7 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
                 Err(error) => store_error(error),
             }
         }
-        (Method::GET, ["_snapshot", repository]) => {
+        (Method::GET, [_, repository]) => {
             let repository = decode_path_param(repository);
             match run_snapshot(state.snapshots.clone(), move |snapshots| {
                 snapshots.get_repositories(Some(&repository))
@@ -575,7 +578,7 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
                 Err(error) => store_error(error),
             }
         }
-        (Method::PUT | Method::POST, ["_snapshot", repository]) => {
+        (Method::PUT | Method::POST, [_, repository]) => {
             let repository = decode_path_param(repository);
             let body = match request.body_json() {
                 Ok(body) => body,
@@ -590,7 +593,7 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
                 Err(error) => store_error(error),
             }
         }
-        (Method::DELETE, ["_snapshot", repository]) => {
+        (Method::DELETE, [_, repository]) => {
             let repository = decode_path_param(repository);
             match run_snapshot(state.snapshots.clone(), move |snapshots| {
                 snapshots.delete_repository(&repository)
@@ -601,7 +604,7 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
                 Err(error) => store_error(error),
             }
         }
-        (Method::POST, ["_snapshot", repository, "_verify"]) => {
+        (Method::POST, [_, repository, operation]) if decode_path_param(operation) == "_verify" => {
             let repository = decode_path_param(repository);
             match run_snapshot(state.snapshots.clone(), move |snapshots| {
                 snapshots.verify_repository(&repository)
@@ -612,7 +615,9 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
                 Err(error) => store_error(error),
             }
         }
-        (Method::POST, ["_snapshot", repository, "_cleanup"]) => {
+        (Method::POST, [_, repository, operation])
+            if decode_path_param(operation) == "_cleanup" =>
+        {
             let repository = decode_path_param(repository);
             match run_snapshot(state.snapshots.clone(), move |snapshots| {
                 snapshots.cleanup_repository(&repository)
@@ -623,7 +628,7 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
                 Err(error) => store_error(error),
             }
         }
-        (Method::GET, ["_snapshot", repository, snapshot]) => {
+        (Method::GET, [_, repository, snapshot]) => {
             let repository = decode_path_param(repository);
             let snapshot = decode_path_param(snapshot);
             match run_snapshot(state.snapshots.clone(), move |snapshots| {
@@ -635,7 +640,7 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
                 Err(error) => store_error(error),
             }
         }
-        (Method::PUT | Method::POST, ["_snapshot", repository, snapshot]) => {
+        (Method::PUT | Method::POST, [_, repository, snapshot]) => {
             let repository = decode_path_param(repository);
             let snapshot = decode_path_param(snapshot);
             let body = match request.body_json() {
@@ -655,7 +660,7 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
                 Err(error) => store_error(error),
             }
         }
-        (Method::DELETE, ["_snapshot", repository, snapshot]) => {
+        (Method::DELETE, [_, repository, snapshot]) => {
             let repository = decode_path_param(repository);
             let snapshot = decode_path_param(snapshot);
             match run_snapshot(state.snapshots.clone(), move |snapshots| {
@@ -666,6 +671,26 @@ async fn handle_snapshot(state: &AppState, request: &Request, parts: &[&str]) ->
                 Ok(body) => Response::json(200, body),
                 Err(error) => store_error(error),
             }
+        }
+        (Method::POST, [_, repository, snapshot, operation])
+            if decode_path_param(operation) == "_restore" =>
+        {
+            let repository = decode_path_param(repository);
+            let snapshot = decode_path_param(snapshot);
+            if let Err(error) = validate_snapshot_name(&repository, "repository")
+                .and_then(|_| validate_snapshot_name(&snapshot, "snapshot"))
+            {
+                return store_error(error);
+            }
+            let body = match request.body_json() {
+                Ok(body) => body,
+                Err(error) => return parse_error(error),
+            };
+            let _restore_request = match parse_restore_request(&body, &request.query) {
+                Ok(request) => request,
+                Err(error) => return store_error(error),
+            };
+            unsupported("snapshot.restore")
         }
         _ => unsupported("snapshot"),
     }

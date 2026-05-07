@@ -404,7 +404,7 @@ impl SnapshotManifest {
     }
 }
 
-fn validate_name(raw: &str, kind: &'static str) -> StoreResult<String> {
+pub(crate) fn validate_name(raw: &str, kind: &'static str) -> StoreResult<String> {
     let name = raw.trim();
     if name.is_empty()
         || matches!(name, "." | "..")

@@ -83,17 +83,18 @@ Security does not make best-effort or fallback routes look implemented.
   sort values
 - Native local snapshot repository management: repository create/get/delete,
   verify/cleanup, and snapshot create/get/delete under `--data-dir/repositories`
-  in durable mode; snapshot APIs fail closed under `--ephemeral`; restore is
-  intentionally deferred and remains a fail-closed admin route with no state
+  in durable mode; snapshot APIs fail closed under `--ephemeral`; restore
+  request parsing is implemented for the narrow native-local subset, but
+  execution is intentionally deferred and remains fail-closed with no state
   mutation
 - Reindex with synthetic completed task metadata for `tasks.get`
 - Delete by query and narrow saved-object namespace/workspace update by query
 
 Unsupported mutating APIs are never routed to runtime fallback.
 Mocked local no-op APIs return 200-series OpenSearch-shaped responses because
-the operation has no meaningful single-node effect. Security/control,
-unsupported snapshot restore/clone/status APIs, dangling-index, and destructive
-filesystem-like APIs still fail closed. PIT lifecycle is implemented as a
+the operation has no meaningful single-node effect. Security/control, restore
+execution and unsupported snapshot clone/status APIs, dangling-index, and
+destructive filesystem-like APIs still fail closed. PIT lifecycle is implemented as a
 read-class search context operation. `_msearch` requests that combine PIT or
 `search_after` with newline-delimited sub-searches remain unsupported and fail
 closed per item.
@@ -157,7 +158,7 @@ OpenSearch-shaped API snapshots are separate local repository artifacts under
 `index.latest` plus readable `index-000001.json`-style manifest files and
 content-addressed database blobs. These files are for local development
 archives; snapshot APIs are disabled in `--ephemeral` mode and snapshot
-restore/status are still unsupported.
+restore execution/status are still unsupported.
 
 PIT contexts are runtime-only and intentionally disappear on process restart.
 They retain bounded in-memory database views and are not written to durable

@@ -272,6 +272,7 @@ fn tier_for(name: &str, methods: &[String]) -> &'static str {
             | "snapshot.delete_repository"
             | "snapshot.get"
             | "snapshot.get_repository"
+            | "snapshot.restore"
             | "snapshot.verify_repository"
             | "put_script"
             | "get_script"

@@ -255,6 +255,197 @@ async fn snapshot_restore_fails_closed_without_mutating_live_state() {
 }
 
 #[tokio::test]
+async fn snapshot_restore_parser_rejects_unsupported_options_without_mutating_live_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = durable_state(temp.path());
+
+    assert_eq!(
+        call(&state, Method::PUT, "/orders", json!({})).await.status,
+        200
+    );
+    assert_eq!(
+        call(
+            &state,
+            Method::PUT,
+            "/orders/_doc/1",
+            json!({ "generation": "live" }),
+        )
+        .await
+        .status,
+        201
+    );
+
+    for (path, body, reason_fragment) in [
+        (
+            "/_snapshot/local/snap-1/_restore",
+            json!({ "include_global_state": true }),
+            "include_global_state",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore",
+            json!({ "partial": true }),
+            "partial snapshot restore",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore",
+            json!({ "storage_type": "remote_snapshot" }),
+            "storage_type [remote_snapshot]",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore",
+            json!({ "source_remote_store_repository": "remote" }),
+            "source_remote_store_repository",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore",
+            json!({ "rename_alias_pattern": "(.+)" }),
+            "rename_alias_pattern",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore?source_remote_store_repository=remote",
+            json!({}),
+            "source_remote_store_repository",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore?source=%7B%7D",
+            json!({}),
+            "query parameter [source]",
+        ),
+    ] {
+        let response = call(&state, Method::POST, path, body).await;
+        assert_eq!(response.status, 501, "{reason_fragment}");
+        let body = response.body.unwrap();
+        assert_eq!(
+            body["error"]["type"],
+            "mainstack_search_unsupported_api_exception"
+        );
+        assert!(
+            body["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains(reason_fragment),
+            "{body}"
+        );
+
+        let live = call(&state, Method::GET, "/orders/_doc/1", Value::Null).await;
+        assert_eq!(live.status, 200);
+        assert_eq!(live.body.unwrap()["_source"]["generation"], "live");
+    }
+}
+
+#[tokio::test]
+async fn snapshot_restore_parser_rejects_invalid_shapes_before_execution() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = durable_state(temp.path());
+
+    for (path, body, reason_fragment) in [
+        (
+            "/_snapshot/local/snap-1/_restore",
+            json!({ "indices": { "name": "orders" } }),
+            "indices must be a string or array",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore",
+            json!({ "include_aliases": "yes" }),
+            "include_aliases",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore?wait_for_completion=eventually",
+            json!({}),
+            "wait_for_completion",
+        ),
+        (
+            "/_snapshot/local/snap-1/%5Frestore?wait_for_completion=eventually",
+            json!({}),
+            "wait_for_completion",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore?wait_for_completion=true&wait_for_completion=false",
+            json!({}),
+            "duplicate query parameter",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore?unknown=value",
+            json!({}),
+            "query parameter [unknown]",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore?master_timeout=banana",
+            json!({}),
+            "master_timeout",
+        ),
+        (
+            "/_snapshot/local/snap-1/%5Frestore?cluster_manager_timeout=0s",
+            json!({}),
+            "cluster_manager_timeout",
+        ),
+        (
+            "/%5Fsnapshot/local/snap-1/_restore",
+            json!({ "indices": "" }),
+            "indices must name at least one index",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore",
+            json!({ "indices": [] }),
+            "indices must name at least one index",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore?master_timeout=30s&master_timeout=60s",
+            json!({}),
+            "duplicate query parameter [master_timeout]",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore?cluster_manager_timeout=30s&cluster_manager_timeout=60s",
+            json!({}),
+            "duplicate query parameter [cluster_manager_timeout]",
+        ),
+        (
+            "/_snapshot/local/snap-1/_restore?pretty=banana",
+            json!({}),
+            "pretty",
+        ),
+    ] {
+        let response = call(&state, Method::POST, path, body).await;
+        assert_eq!(response.status, 400, "{path}");
+        let body = response.body.unwrap();
+        assert_eq!(body["error"]["type"], "parse_exception");
+        assert!(
+            body["error"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains(reason_fragment),
+            "{body}"
+        );
+    }
+
+    let common = call(
+        &state,
+        Method::POST,
+        "/_snapshot/local/snap-1/_restore?pretty=true&human=false&error_trace&filter_path=error.type",
+        json!({}),
+    )
+    .await;
+    assert_eq!(common.status, 501);
+    assert_eq!(
+        common.body.unwrap()["error"]["type"],
+        "mainstack_search_unsupported_api_exception"
+    );
+
+    let valid_timeout = call(
+        &state,
+        Method::POST,
+        "/%5Fsnapshot/local/snap-1/%5Frestore?master_timeout=0&cluster_manager_timeout=10micros",
+        json!({}),
+    )
+    .await;
+    assert_eq!(valid_timeout.status, 501);
+    assert_eq!(
+        valid_timeout.body.unwrap()["error"]["type"],
+        "mainstack_search_unsupported_api_exception"
+    );
+}
+
+#[tokio::test]
 async fn snapshot_operation_tokens_in_name_slot_fail_closed_without_creating_snapshots() {
     let temp = tempfile::tempdir().unwrap();
     let state = durable_state(temp.path());
@@ -596,6 +787,44 @@ async fn snapshot_reserved_names_are_selectors_not_creatable_names() {
         let existing = call(&state, Method::GET, "/_snapshot/local/snap-1", Value::Null).await;
         assert_eq!(existing.status, 200);
         assert_eq!(existing.body.unwrap()["snapshots"][0]["snapshot"], "snap-1");
+    }
+
+    for repository in ["_all", "all", "*", "%5Fall", "%61ll", "local,_all"] {
+        let response = call(
+            &state,
+            Method::POST,
+            &format!("/_snapshot/{repository}/snap-1/_restore"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(response.status, 400);
+        assert_eq!(
+            response.body.unwrap()["error"]["type"],
+            "repository_exception"
+        );
+    }
+
+    for snapshot in [
+        "_all",
+        "all",
+        "*",
+        "%5Fall",
+        "%61ll",
+        "snap-1,_all",
+        "snap-1%2Fextra",
+    ] {
+        let response = call(
+            &state,
+            Method::POST,
+            &format!("/_snapshot/local/{snapshot}/_restore"),
+            json!({}),
+        )
+        .await;
+        assert_eq!(response.status, 400);
+        assert_eq!(
+            response.body.unwrap()["error"]["type"],
+            "invalid_snapshot_name_exception"
+        );
     }
 }
 

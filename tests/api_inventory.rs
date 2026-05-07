@@ -72,6 +72,7 @@ fn snapshot_routes_are_admin_implemented_or_fail_closed() {
         "snapshot.create",
         "snapshot.get",
         "snapshot.delete",
+        "snapshot.restore",
     ] {
         let route = inventory
             .iter()
@@ -80,7 +81,7 @@ fn snapshot_routes_are_admin_implemented_or_fail_closed() {
         assert_eq!(route.tier, Tier::Implemented, "{name}");
         assert_eq!(route.access, AccessClass::Admin, "{name}");
     }
-    for name in ["snapshot.restore", "snapshot.clone", "snapshot.status"] {
+    for name in ["snapshot.clone", "snapshot.status"] {
         let route = inventory
             .iter()
             .find(|route| route.name == name)
@@ -121,6 +122,16 @@ fn snapshot_routes_are_admin_implemented_or_fail_closed() {
         (Method::POST, "/_snapshot/local/snap-1", "snapshot.create"),
         (Method::GET, "/_snapshot/local/snap-1", "snapshot.get"),
         (Method::DELETE, "/_snapshot/local/snap-1", "snapshot.delete"),
+        (
+            Method::POST,
+            "/_snapshot/local/snap-1/_restore",
+            "snapshot.restore",
+        ),
+        (
+            Method::POST,
+            "/_snapshot/local/snap-1/%5Frestore",
+            "snapshot.restore",
+        ),
     ] {
         let route = classify(&method, path);
         assert_eq!(route.api_name, api_name, "{method} {path}");
@@ -145,11 +156,6 @@ fn snapshot_routes_are_admin_implemented_or_fail_closed() {
         ),
         (
             Method::POST,
-            "/_snapshot/local/snap-1/_restore",
-            "snapshot.restore",
-        ),
-        (
-            Method::POST,
             "/_snapshot/local/_restore",
             "snapshot.restore",
         ),
@@ -161,11 +167,6 @@ fn snapshot_routes_are_admin_implemented_or_fail_closed() {
         (
             Method::GET,
             "/_snapshot/local/snap-1/_restore",
-            "snapshot.restore",
-        ),
-        (
-            Method::POST,
-            "/_snapshot/local/snap-1/%5Frestore",
             "snapshot.restore",
         ),
         (
